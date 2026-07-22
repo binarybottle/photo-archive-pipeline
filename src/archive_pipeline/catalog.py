@@ -154,10 +154,27 @@ CREATE TABLE edited_pair (
 );
 """
 
+SCHEMA_V4 = """
+-- Stage 2b: per-directory Takeout-derivation classification of LOCAL.
+ALTER TABLE instance ADD COLUMN effective_trust TEXT;  -- curated | takeout
+CREATE TABLE local_provenance (
+  source TEXT NOT NULL,
+  dir_path TEXT NOT NULL,           -- relative directory ('' = source root)
+  media_count INTEGER NOT NULL,
+  sidecar_count INTEGER NOT NULL,
+  signal REAL NOT NULL,             -- 0..1 Takeout-derivation signal
+  signals_json TEXT,                -- component breakdown
+  classification TEXT NOT NULL,     -- curated | takeout_derived
+  override TEXT,                    -- NULL | config:curated | config:takeout_derived
+  PRIMARY KEY (source, dir_path)
+);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
     Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
     Migration(3, "takeout normalization tables (Stage 2)", SCHEMA_V3),
+    Migration(4, "local provenance classification (Stage 2b)", SCHEMA_V4),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

@@ -28,8 +28,20 @@ DEFAULT_FOLDER_DATE_PATTERNS: tuple[str, ...] = (
     r"^(?P<year>(19|20)\d{2})$",
     r"^(?P<year>(19|20)\d{2})-(?P<month>0[1-9]|1[0-2])$",
     r"^(?P<year>(19|20)\d{2})-(?P<month>0[1-9]|1[0-2])-(?P<day>0[1-9]|[12]\d|3[01])$",
+    r"^(?P<year>(19|20)\d{2})-(?P<month>0[1-9]|1[0-2])-(?P<day>0[1-9]|[12]\d|3[01])[_ -].*$",
     r"^(?P<year>(19|20)\d{2})[_ -](?P<event>\D.*)$",
     r"^(?P<year>(19|20)\d{2})(?P<month>0[1-9]|1[0-2])(?P<day>0[1-9]|[12]\d|3[01])[_ -].*$",
+    r"^Photos from (?P<year>(19|20)\d{2})$",
+)
+
+#: Filename date patterns (spec Stage 3): IMG_/VID_/PXL_ camera names, bare
+#: timestamps, WhatsApp. Extendable via ``dates.filename_patterns``.
+DEFAULT_FILENAME_DATE_PATTERNS: tuple[str, ...] = (
+    r"^(?:IMG|VID|PXL|MVIMG)[-_](?P<year>(19|20)\d{2})(?P<month>\d{2})(?P<day>\d{2})"
+    r"[-_](?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})",
+    r"^(?P<year>(19|20)\d{2})(?P<month>\d{2})(?P<day>\d{2})"
+    r"[-_ ](?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})",
+    r"^IMG-(?P<year>(19|20)\d{2})(?P<month>\d{2})(?P<day>\d{2})-WA",
 )
 
 
@@ -77,6 +89,7 @@ class DatesConfig:
     """Date-candidate extraction settings (spec Stage 3)."""
 
     folder_patterns: tuple[str, ...] = DEFAULT_FOLDER_DATE_PATTERNS
+    filename_patterns: tuple[str, ...] = DEFAULT_FILENAME_DATE_PATTERNS
     #: Camera model -> first plausible year; EXIF dates before it are distrusted.
     camera_era: dict[str, int] = field(default_factory=dict)
 
@@ -97,8 +110,9 @@ class RuntimeConfig:
 
 @dataclass(frozen=True)
 class ProvenanceConfig:
-    """Stage 2b overrides: LOCAL path prefixes whose classification the user fixes."""
+    """Stage 2b: derivation-signal threshold and user classification overrides."""
 
+    threshold: float = 0.5
     curated_overrides: tuple[str, ...] = ()
     takeout_derived_overrides: tuple[str, ...] = ()
 
@@ -180,6 +194,7 @@ def default_config_toml() -> str:
         True
     """
     patterns = "\n".join(f"    '{p}'," for p in DEFAULT_FOLDER_DATE_PATTERNS)
+    fn_patterns = "\n".join(f"    '{p}'," for p in DEFAULT_FILENAME_DATE_PATTERNS)
     return f"""\
 # Photo archive pipeline configuration (spec section 12).
 # Every tunable lives here; unknown keys are rejected to catch typos.
@@ -212,6 +227,10 @@ undated_placement = "undated"  # archive/<this>/ for unresolvable dates
 folder_patterns = [
 {patterns}
 ]
+# Regexes tried against media filenames (last-resort date candidate, rule R5).
+filename_patterns = [
+{fn_patterns}
+]
 
 # Camera model -> first plausible year; earlier EXIF dates are distrusted.
 [dates.camera_era]
@@ -223,7 +242,10 @@ hierarchy_separator = "/"
 parallelism = 0        # 0 = use all CPUs
 
 [provenance]
-# Stage 2b overrides: LOCAL path prefixes forced to a classification.
+# Stage 2b: LOCAL directories whose Takeout-derivation signal meets the
+# threshold get TAKEOUT-level trust. Review reports/local_provenance.csv, then
+# force any misclassified path prefixes here.
+threshold = 0.5
 curated_overrides = []
 takeout_derived_overrides = []
 """

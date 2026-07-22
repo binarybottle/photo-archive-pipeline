@@ -22,9 +22,11 @@ import typer
 from archive_pipeline import __version__
 from archive_pipeline.catalog import open_catalog, schema_version
 from archive_pipeline.config import Config, ConfigError, load_config
+from archive_pipeline.dates import AUDIT_REPORT, DateResolveError, resolve_dates
 from archive_pipeline.fixtures.generator import generate_corpus
 from archive_pipeline.ingest import IngestError, ingest_source
 from archive_pipeline.logs import configure_logging
+from archive_pipeline.provenance import PROVENANCE_REPORT, ProvenanceError, classify_local
 from archive_pipeline.runs import record_run
 from archive_pipeline.space import SpaceError
 from archive_pipeline.staging import StagingError, stage_takeout_zip
@@ -252,10 +254,65 @@ def takeout_normalize(
         typer.echo(f"Unmatched detail: {wt.reports_dir / UNMATCHED_REPORT}")
 
 
+@app.command("local-provenance")
+def local_provenance(ctx: typer.Context) -> None:
+    """Classify LOCAL directories as curated vs takeout-derived (Stage 2b)."""
+    wt = _working_tree(ctx)
+    cfg = _load_config_or_exit(wt)
+    log = configure_logging(wt.logs_dir, stage="local-provenance")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "local-provenance", {}):
+            summary = classify_local(conn, cfg, wt, log)
+    except ProvenanceError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+    typer.echo(
+        f"Classified {summary.dirs_total} directories in {len(summary.sources)}"
+        f" source(s): {summary.curated} curated, {summary.derived} takeout-derived"
+        f" ({summary.overridden} by config override)."
+    )
+    typer.echo(
+        f"Linked {summary.sidecars_linked} sidecar(s) inside derived dirs;"
+        f" flagged {summary.recompressed_flagged} media google_recompressed."
+    )
+    typer.echo(f"Review {wt.reports_dir / PROVENANCE_REPORT} and set overrides in")
+    typer.echo("config.toml [provenance] before running `archive date-resolve`.")
+
+
 @app.command("date-resolve")
-def date_resolve(ctx: typer.Context) -> None:
-    """Resolve each instance's capture date via the trust hierarchy (M4)."""
-    _not_implemented("date-resolve", "M4")
+def date_resolve(
+    ctx: typer.Context,
+    sample: Annotated[
+        int, typer.Option("--sample", help="Audit-sample size exported for user review.")
+    ] = 200,
+) -> None:
+    """Resolve each media instance's capture date via the trust hierarchy (Stage 3)."""
+    wt = _working_tree(ctx)
+    cfg = _load_config_or_exit(wt)
+    log = configure_logging(wt.logs_dir, stage="date-resolve")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "date-resolve", {"sample": sample}):
+            summary = resolve_dates(conn, cfg, wt, log, sample_size=sample)
+    except DateResolveError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+    statuses = ", ".join(f"{s}={n}" for s, n in sorted(summary.by_status.items()))
+    rules = ", ".join(f"{r}={n}" for r, n in sorted(summary.by_rule.items()))
+    typer.echo(f"Resolved dates for {summary.total} media instances: {statuses}.")
+    typer.echo(f"Rules fired: {rules or 'none'}.")
+    typer.echo(
+        f"Conflict rate {summary.conflict_rate:.1%};"
+        f" {summary.reviewed_preserved} reviewed row(s) preserved."
+    )
+    typer.echo(f"Audit sample ({summary.sample_size}): {wt.reports_dir / AUDIT_REPORT}")
+    if not summary.changed:
+        typer.echo("Catalog already up to date (no changes written).")
 
 
 @review_app.command("serve")

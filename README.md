@@ -8,7 +8,7 @@ working in this repo live in `CLAUDE.md`.
 
 ## Status
 
-Milestone **M3 (takeout normalization)** complete. Working today:
+Milestone **M4 (date resolution)** complete. Working today:
 
 - `archive ingest` (M2): full source inventory — streamed SHA-256, signature MIME,
   exiftool batch EXIF, perceptual hashes, video keyframe signatures (needs ffmpeg),
@@ -17,8 +17,16 @@ Milestone **M3 (takeout normalization)** complete. Working today:
   supplemental-metadata, truncation, `(n)` numbering in both orderings), `-edited`
   pair linkage, album-folder memberships, `google_recompressed` heuristic, and a
   CSV report of everything unmatched. Idempotent re-runs.
+- `archive local-provenance` (M4, Stage 2b): classifies every LOCAL directory as
+  curated vs takeout-derived (sidecar/name/descriptor/recompression signals),
+  exports `reports/local_provenance.csv` for review, honors config overrides,
+  assigns effective trust, and parses sidecars inside derived subtrees.
+- `archive date-resolve` (M4, Stage 3): EXIF/folder/Takeout/filename candidates,
+  distrust heuristics (epoch defaults, mass-identical, camera era, scan-date,
+  CreateDate-only scans), rules R1–R7 with full decision logging, reviewed rows
+  preserved, and `reports/date_audit_sample.csv` for user audit.
 
-Stages date-resolve onward are stubs that name their milestone.
+Stages review onward are stubs that name their milestone.
 
 ## Setup
 
@@ -39,6 +47,9 @@ poetry run archive fixtures generate --dest /tmp/archive-fixtures --seed 42
 poetry run archive --working-tree /tmp/archive-demo ingest --source LOCAL --root /tmp/archive-fixtures/LOCAL
 poetry run archive --working-tree /tmp/archive-demo ingest --source TAKEOUT --root /tmp/archive-fixtures/TAKEOUT --export-id t2015
 poetry run archive --working-tree /tmp/archive-demo takeout-normalize
+poetry run archive --working-tree /tmp/archive-demo local-provenance
+# ... review /tmp/archive-demo/reports/local_provenance.csv, set overrides ...
+poetry run archive --working-tree /tmp/archive-demo date-resolve
 ```
 
 Ingest refuses to run until the Stage 0 preserve gate (`preserve.confirmed` in
