@@ -117,7 +117,6 @@ def test_ingest_without_init_explains(wt_root: Path) -> None:
 @pytest.mark.parametrize(
     ("args", "milestone"),
     [
-        (["takeout-normalize"], "M3"),
         (["date-resolve"], "M4"),
         (["review", "serve"], "M5"),
         (["dedup"], "M6"),

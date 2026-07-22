@@ -126,9 +126,38 @@ ALTER TABLE instance ADD COLUMN mtime_ns INTEGER;
 ALTER TABLE instance ADD COLUMN flags TEXT;
 """
 
+SCHEMA_V3 = """
+-- Takeout normalization (Stage 2).
+ALTER TABLE takeout_sidecar ADD COLUMN creation_time TEXT;  -- upload-artifact heuristic (R4)
+ALTER TABLE instance ADD COLUMN google_recompressed INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX idx_sidecar_instance ON takeout_sidecar(instance_id);
+
+-- Where each source was ingested from; later stages read source files by this root.
+CREATE TABLE source_root (
+  source TEXT PRIMARY KEY,
+  root TEXT NOT NULL,
+  registered TEXT NOT NULL
+);
+
+-- Takeout album-folder memberships: topical keyword candidates (Stage 6).
+CREATE TABLE album_membership (
+  media_instance_id INTEGER NOT NULL REFERENCES instance(id),
+  album TEXT NOT NULL,
+  album_dir TEXT NOT NULL,
+  PRIMARY KEY (media_instance_id, album_dir)
+);
+
+-- Google "-edited" versions linked to their originals (edge case 2).
+CREATE TABLE edited_pair (
+  edited_instance_id INTEGER PRIMARY KEY REFERENCES instance(id),
+  original_instance_id INTEGER NOT NULL REFERENCES instance(id)
+);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
     Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
+    Migration(3, "takeout normalization tables (Stage 2)", SCHEMA_V3),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

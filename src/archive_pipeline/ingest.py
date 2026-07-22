@@ -25,6 +25,7 @@ import sqlite3
 import unicodedata
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from logging import Logger
 from pathlib import Path
 from typing import Any
@@ -272,6 +273,13 @@ def ingest_source(
     """
     root = root.resolve()
     _guard_inv1(root, log)
+    with conn:
+        conn.execute(
+            "INSERT INTO source_root (source, root, registered) VALUES (?, ?, ?)"
+            " ON CONFLICT(source) DO UPDATE SET"
+            " root = excluded.root, registered = excluded.registered",
+            (source_id, str(root), datetime.now(tz=UTC).isoformat(timespec="seconds")),
+        )
 
     entries = walk_source(root)
     existing = {

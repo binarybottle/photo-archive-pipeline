@@ -8,12 +8,17 @@ working in this repo live in `CLAUDE.md`.
 
 ## Status
 
-Milestone **M2 (ingest)** complete: full source inventory with streamed SHA-256,
-signature-based MIME + kind classification, exiftool batch EXIF extraction,
-perceptual hashes (pHash/dHash, orientation-normalized), video keyframe signatures
-(needs ffmpeg), Takeout zip staging with disk-space preflight, and size+mtime
-resumability (re-runs are no-ops). Stages takeout-normalize onward are stubs that
-name their milestone.
+Milestone **M3 (takeout normalization)** complete. Working today:
+
+- `archive ingest` (M2): full source inventory — streamed SHA-256, signature MIME,
+  exiftool batch EXIF, perceptual hashes, video keyframe signatures (needs ffmpeg),
+  Takeout zip staging with disk-space preflight, size+mtime resumability.
+- `archive takeout-normalize` (M3): sidecar-to-media matching (exact /
+  supplemental-metadata, truncation, `(n)` numbering in both orderings), `-edited`
+  pair linkage, album-folder memberships, `google_recompressed` heuristic, and a
+  CSV report of everything unmatched. Idempotent re-runs.
+
+Stages date-resolve onward are stubs that name their milestone.
 
 ## Setup
 
@@ -25,7 +30,7 @@ poetry install
 poetry run pytest
 ```
 
-## Demo (M2)
+## Demo (M3)
 
 ```
 poetry run archive --working-tree /tmp/archive-demo init
@@ -33,6 +38,7 @@ poetry run archive --working-tree /tmp/archive-demo init
 poetry run archive fixtures generate --dest /tmp/archive-fixtures --seed 42
 poetry run archive --working-tree /tmp/archive-demo ingest --source LOCAL --root /tmp/archive-fixtures/LOCAL
 poetry run archive --working-tree /tmp/archive-demo ingest --source TAKEOUT --root /tmp/archive-fixtures/TAKEOUT --export-id t2015
+poetry run archive --working-tree /tmp/archive-demo takeout-normalize
 ```
 
 Ingest refuses to run until the Stage 0 preserve gate (`preserve.confirmed` in

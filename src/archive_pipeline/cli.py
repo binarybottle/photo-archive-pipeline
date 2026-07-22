@@ -28,6 +28,7 @@ from archive_pipeline.logs import configure_logging
 from archive_pipeline.runs import record_run
 from archive_pipeline.space import SpaceError
 from archive_pipeline.staging import StagingError, stage_takeout_zip
+from archive_pipeline.takeout import UNMATCHED_REPORT, TakeoutError, normalize_takeout
 from archive_pipeline.workingtree import WorkingTree, init_working_tree
 
 app = typer.Typer(
@@ -208,9 +209,47 @@ def ingest(
 
 
 @app.command("takeout-normalize")
-def takeout_normalize(ctx: typer.Context) -> None:
-    """Attach Takeout JSON sidecars to media instances (M3)."""
-    _not_implemented("takeout-normalize", "M3")
+def takeout_normalize(
+    ctx: typer.Context,
+    source: Annotated[
+        str | None,
+        typer.Option(
+            "--source",
+            help="Restrict to one TAKEOUT source id (e.g. TAKEOUT:t2015); default: all.",
+        ),
+    ] = None,
+) -> None:
+    """Attach Takeout JSON sidecars to media instances (Stage 2, catalog-only)."""
+    wt = _working_tree(ctx)
+    log = configure_logging(wt.logs_dir, stage="takeout-normalize")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "takeout-normalize", {"source": source}):
+            summary = normalize_takeout(
+                conn, wt, log, sources=[source] if source else None
+            )
+    except TakeoutError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+
+    methods = ", ".join(f"{m}={n}" for m, n in sorted(summary.matched_by_method.items()))
+    typer.echo(
+        f"Normalized {len(summary.sources)} TAKEOUT source(s):"
+        f" {summary.sidecars_total} sidecars ({methods or 'none matched'}),"
+        f" {summary.unmatched_sidecars} unmatched sidecars."
+    )
+    typer.echo(
+        f"Media: {summary.matched_media}/{summary.media_total} matched"
+        f" ({summary.match_rate:.1%}); {summary.edited_pairs} edited pair(s),"
+        f" {summary.albums} album(s) ({summary.album_memberships} memberships),"
+        f" {summary.recompressed} flagged google_recompressed."
+    )
+    if not summary.changed:
+        typer.echo("Catalog already up to date (no changes written).")
+    if summary.unmatched_sidecars or summary.unmatched_media:
+        typer.echo(f"Unmatched detail: {wt.reports_dir / UNMATCHED_REPORT}")
 
 
 @app.command("date-resolve")
