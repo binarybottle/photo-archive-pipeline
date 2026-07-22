@@ -27,6 +27,13 @@ from archive_pipeline.dedup import CLUSTER_AUDIT_REPORT, DedupError, run_dedup
 from archive_pipeline.fixtures.generator import generate_corpus
 from archive_pipeline.ingest import IngestError, ingest_source
 from archive_pipeline.logs import configure_logging
+from archive_pipeline.materialize import (
+    ARCHIVE_MANIFEST,
+    KEYWORD_MAP,
+    QUARANTINE_MANIFEST,
+    MaterializeError,
+    run_materialize,
+)
 from archive_pipeline.provenance import PROVENANCE_REPORT, ProvenanceError, classify_local
 from archive_pipeline.runs import record_run
 from archive_pipeline.space import SpaceError
@@ -394,8 +401,45 @@ def materialize(
         ),
     ] = True,
 ) -> None:
-    """Write the archive and quarantine; dry-run by default (INV-4) (M7)."""
-    _not_implemented("materialize", "M7")
+    """Write the archive and quarantine; dry-run by default (INV-4) (Stage 6)."""
+    wt = _working_tree(ctx)
+    cfg = _load_config_or_exit(wt)
+    log = configure_logging(wt.logs_dir, stage="materialize")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "materialize", {"execute": not dry_run}):
+            summary = run_materialize(conn, cfg, wt, log, execute=not dry_run)
+    except (MaterializeError, SpaceError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+
+    mode = "EXECUTED" if not dry_run else "DRY-RUN (no files written)"
+    typer.echo(
+        f"Materialize {mode}: {summary.archived} to archive"
+        f" ({summary.undated} undated, {summary.sidecars_written} xmp sidecars),"
+        f" {summary.quarantined} to quarantine ({summary.quarantine_copies} distinct"
+        f" copies), {summary.excluded} excluded."
+    )
+    typer.echo(
+        f"Bytes to copy: {summary.bytes_planned:,}; already done (skipped):"
+        f" {summary.skipped_done}."
+    )
+    if summary.keyword_map_created:
+        typer.secho(
+            f"Wrote default keyword map: {wt.reports_dir / KEYWORD_MAP} — review it"
+            " before executing.",
+            fg=typer.colors.YELLOW,
+        )
+    typer.echo(
+        f"Manifests: {wt.reports_dir / ARCHIVE_MANIFEST},"
+        f" {wt.reports_dir / QUARANTINE_MANIFEST}"
+    )
+    if dry_run:
+        typer.echo("Review the manifests, then run `archive materialize --execute`.")
+    else:
+        typer.echo(f"Post-execute sample verified: {summary.sample_checked} file(s).")
 
 
 @app.command()

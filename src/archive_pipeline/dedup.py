@@ -389,10 +389,18 @@ def merge_dates(
             {"date": None, "precision": None, "source": None, "flags": ["date_unresolved"]},
             True,
         )
+
+    def _priority(m: Media) -> float:
+        # A takeout-derived folder date (rule R4b) reflects Google's dating,
+        # not the user's research (Stage 2b): rank it below takeout_json.
+        if m.resolved_source == "folder" and m.effective_trust != "curated":
+            return 1.5
+        return _DATE_SOURCE_PRIORITY.get(m.resolved_source or "", 0)
+
     chosen = max(
         dated,
         key=lambda m: (
-            _DATE_SOURCE_PRIORITY.get(m.resolved_source or "", 0),
+            _priority(m),
             _PRECISION_CHARS.get(m.resolved_precision or "year", 4),
             m.rel_path,
         ),

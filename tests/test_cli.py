@@ -117,8 +117,6 @@ def test_ingest_without_init_explains(wt_root: Path) -> None:
 @pytest.mark.parametrize(
     ("args", "milestone"),
     [
-        (["materialize"], "M7"),
-        (["materialize", "--execute"], "M7"),
         (["verify"], "M8"),
         (["report"], "M8"),
         (["maintain", "verify-checksums"], "M8"),

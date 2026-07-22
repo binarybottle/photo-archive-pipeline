@@ -8,7 +8,7 @@ working in this repo live in `CLAUDE.md`.
 
 ## Status
 
-Milestone **M6 (dedup)** complete. Working today:
+Milestone **M7 (materialize)** complete. Working today:
 
 - `archive ingest` (M2): full source inventory — streamed SHA-256, signature MIME,
   exiftool batch EXIF, perceptual hashes, video keyframe signatures (needs ffmpeg),
@@ -40,8 +40,19 @@ Milestone **M6 (dedup)** complete. Working today:
   crop aspect mismatch), field-level metadata merge planning (date provenance
   priority, GPS with camera-EXIF preference, description/title/keyword
   unions), review locking, and `reports/cluster_audit_sample.csv`.
+- `archive materialize` (M7, Stage 6): dry-run by default (INV-4) with full
+  manifests and zero writes; the keyword-map workflow
+  (`reports/keyword_map.csv`, keep/rename/drop with hierarchies); on
+  `--execute`: INV-9 space preflight, atomic copy-verify-rename into
+  `archive/YYYY/YYYY-MM/<stem>__<sha8><ext>`, metadata written through
+  exiftool in one batch per file (resolved dates, GPS, description,
+  XMP-dc:Subject keywords, the full XMP-ArchivePipe provenance namespace,
+  Rating=4 + `edited-preferred`/`has-edit` for edited pairs), `.xmp` sidecars
+  with untouched bytes for RAW/video, content-addressed quarantine with a
+  JSONL index (one copy per hash), exclusions with reasons, the `placement`
+  ledger, resumable re-runs, and a post-execute hash sample check.
 
-Stages materialize onward are stubs that name their milestone.
+Stage verify/report/maintain (M8) remains stubbed.
 
 ## Setup
 
@@ -67,6 +78,9 @@ poetry run archive --working-tree /tmp/archive-demo local-provenance
 poetry run archive --working-tree /tmp/archive-demo date-resolve
 poetry run archive --working-tree /tmp/archive-demo dedup
 poetry run archive --working-tree /tmp/archive-demo review serve   # http://127.0.0.1:8765
+poetry run archive --working-tree /tmp/archive-demo materialize    # dry-run
+# ... review manifests + keyword_map.csv ...
+poetry run archive --working-tree /tmp/archive-demo materialize --execute
 ```
 
 Ingest refuses to run until the Stage 0 preserve gate (`preserve.confirmed` in

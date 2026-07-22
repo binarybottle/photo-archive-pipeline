@@ -206,6 +206,21 @@ def test_merge_dates_disagreement_flags_review() -> None:
     assert "date_disagreement" in merged["flags"]
 
 
+def test_merge_dates_takeout_derived_folder_ranks_below_sidecar() -> None:
+    untrusted_folder = mk(
+        1, resolved_source="folder", resolved_date="2015-01-01",
+        resolved_precision="year", effective_trust="takeout",
+    )
+    sidecar = mk(
+        2, resolved_source="takeout_json", resolved_date="2015-04-18T12:00:00",
+        effective_trust="takeout",
+    )
+    merged, needs_review = merge_dates([untrusted_folder, sidecar])
+    assert merged["source"] == "takeout_json"
+    assert merged["date"] == "2015-04-18T12:00:00"
+    assert not needs_review  # the 2015 year folder brackets the sidecar time
+
+
 def test_merge_dates_nothing_resolved() -> None:
     merged, needs_review = merge_dates(
         [mk(1, resolved_date=None, resolved_source=None)]
