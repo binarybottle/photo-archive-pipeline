@@ -1,4 +1,4 @@
-"""CLI tests: init, preserve gate, stage stubs, logging output."""
+"""CLI tests: init, preserve gate, ingest wiring, logging output."""
 
 import json
 import shutil
@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from archive_pipeline.catalog import LATEST_SCHEMA_VERSION, open_catalog, schema_version
-from archive_pipeline.cli import EXIT_NOT_IMPLEMENTED, app
+from archive_pipeline.cli import app
 from archive_pipeline.fixtures.generator import generate_corpus
 
 runner = CliRunner()
@@ -112,21 +112,6 @@ def test_ingest_without_init_explains(wt_root: Path) -> None:
     )
     assert result.exit_code == 1
     assert "archive init" in result.output
-
-
-@pytest.mark.parametrize(
-    ("args", "milestone"),
-    [
-        (["verify"], "M8"),
-        (["report"], "M8"),
-        (["maintain", "verify-checksums"], "M8"),
-        (["maintain", "import", "--root", "."], "M8"),
-    ],
-)
-def test_future_stages_are_named_stubs(wt_root: Path, args: list[str], milestone: str) -> None:
-    result = runner.invoke(app, ["--working-tree", str(wt_root), *args])
-    assert result.exit_code == EXIT_NOT_IMPLEMENTED
-    assert milestone in result.output
 
 
 def test_version_flag() -> None:

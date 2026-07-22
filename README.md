@@ -8,7 +8,8 @@ working in this repo live in `CLAUDE.md`.
 
 ## Status
 
-Milestone **M7 (materialize)** complete. Working today:
+**All milestones (M1–M8) complete** — the full pipeline is implemented. Working
+today:
 
 - `archive ingest` (M2): full source inventory — streamed SHA-256, signature MIME,
   exiftool batch EXIF, perceptual hashes, video keyframe signatures (needs ffmpeg),
@@ -51,8 +52,23 @@ Milestone **M7 (materialize)** complete. Working today:
   with untouched bytes for RAW/video, content-addressed quarantine with a
   JSONL index (one copy per hash), exclusions with reasons, the `placement`
   ledger, resumable re-runs, and a post-execute hash sample check.
-
-Stage verify/report/maintain (M8) remains stubbed.
+- `archive verify` (M8, Stage 7): proves the conservation law (INV-3) on disk —
+  every instance placed exactly once, every archive file re-hashed against its
+  recorded hash, every quarantine file byte-identical to its source, nothing
+  unaccounted on disk; discrepancies enumerated exactly, nonzero exit on any;
+  machine-readable `reports/verify_report.json` with full statistics.
+- `archive report` (M8): human-readable summary — dispositions, date sources
+  and precisions, cluster histogram, decision/review counts, storage totals,
+  Takeout-only videos, last run per stage, last verify result.
+- `archive maintain verify-checksums` (M8): cron-able re-hash of archive and
+  quarantine against the ledger.
+- `archive maintain import --root` (M8): incremental imports through the same
+  ingest → provenance → date-resolve → dedup path; byte-identical newcomers
+  never displace already-archived winners; review, then materialize as usual.
+- `archive maintain purge-quarantine` (M8): manual destruction of quarantined
+  losers, gated on a *passing* verify and a typed confirmation phrase; writes
+  a purge marker so later verifies report the purge instead of failing.
+  Recommended no sooner than 6 months after verify passes with backups in place.
 
 ## Setup
 
@@ -81,7 +97,23 @@ poetry run archive --working-tree /tmp/archive-demo review serve   # http://127.
 poetry run archive --working-tree /tmp/archive-demo materialize    # dry-run
 # ... review manifests + keyword_map.csv ...
 poetry run archive --working-tree /tmp/archive-demo materialize --execute
+poetry run archive --working-tree /tmp/archive-demo verify
+poetry run archive --working-tree /tmp/archive-demo report
 ```
+
+## After the pipeline: browsing and backups
+
+- **Photo manager**: point digiKam (database on the internal SSD) read-mostly at
+  `archive/`. It reads the embedded XMP keywords (`XMP-dc:Subject`) as tags and
+  the `Rating=4` on edited-preferred versions; its Similarity search doubles as
+  an independent second-pass audit of the pipeline's dedup. The archive tree
+  stays the source of truth — the manager is a view. (immich remains an option
+  later; nothing in the archive layout would change.)
+- **Backups**: keep 3-2-1 copies of `archive/` + `catalog.db` + `reports/`
+  (e.g. restic or borg to a second disk and one offsite target). Schedule
+  `archive maintain verify-checksums` periodically (cron/launchd).
+- **Purging quarantine**: only after `archive verify` passes, backups exist,
+  and at least ~6 months have gone by: `archive maintain purge-quarantine`.
 
 Ingest refuses to run until the Stage 0 preserve gate (`preserve.confirmed` in
 `config.toml`) is set to `true` by you, after a verbatim backup of all sources

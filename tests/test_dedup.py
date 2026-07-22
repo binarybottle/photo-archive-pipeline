@@ -29,7 +29,7 @@ def mk(id: int = 1, rel: str = "a/x.jpg", **kw: Any) -> Media:
         "height": 3000, "phash": None, "dhash": None, "video_sig": None,
         "exif_tag_count": 30, "exif_dto": "2015-04-18T09:30:00",
         "camera_model": "Pixel", "gps_lat": None, "gps_lon": None,
-        "content_identifier": None, "effective_trust": "curated",
+        "content_identifier": None, "effective_trust": "curated", "archived": False,
         "google_recompressed": False, "trusted_dto": True,
         "resolved_date": "2015-04-18T09:30:00", "resolved_precision": "second",
         "resolved_source": "exif",

@@ -1,9 +1,9 @@
 """``archive`` CLI: staged pipeline commands (spec section 5).
 
-M1 implements the scaffold: working-tree init, config loading, catalog schema,
-run bookkeeping, structured logging, and the fixture generator. Stage commands
-for later milestones are stubs that exit with code 2 and name their milestone;
-``ingest`` already enforces the Stage 0 preserve gate.
+All stages are implemented: init, ingest (Stage 0 preserve gate + Stage 1),
+takeout-normalize (2), local-provenance (2b), date-resolve (3), review serve
+(4), dedup (5), materialize (6, dry-run by default), verify/report (7), and
+maintain verify-checksums / import / purge-quarantine (8).
 
 Usage:
     $ archive --working-tree /archive-project init
@@ -13,6 +13,8 @@ Usage:
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -39,6 +41,13 @@ from archive_pipeline.runs import record_run
 from archive_pipeline.space import SpaceError
 from archive_pipeline.staging import StagingError, stage_takeout_zip
 from archive_pipeline.takeout import UNMATCHED_REPORT, TakeoutError, normalize_takeout
+from archive_pipeline.verify import (
+    PURGED_MARKER,
+    VERIFY_REPORT,
+    VerifyError,
+    collect_stats,
+    run_verify,
+)
 from archive_pipeline.workingtree import WorkingTree, init_working_tree
 
 app = typer.Typer(
@@ -52,8 +61,6 @@ fixtures_app = typer.Typer(help="Deterministic synthetic test corpora (spec sect
 app.add_typer(review_app, name="review")
 app.add_typer(maintain_app, name="maintain")
 app.add_typer(fixtures_app, name="fixtures")
-
-EXIT_NOT_IMPLEMENTED = 2
 
 PRESERVE_REMINDER = (
     "Refusing to run: preserve.confirmed is false in config.toml.\n"
@@ -85,16 +92,6 @@ def _load_config_or_exit(wt: WorkingTree) -> Config:
     except ConfigError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from exc
-
-
-def _not_implemented(stage: str, milestone: str) -> None:
-    """Exit with code 2 for a stage scheduled in a later milestone."""
-    typer.secho(
-        f"`{stage}` is not implemented yet (arrives in milestone {milestone}).",
-        fg=typer.colors.YELLOW,
-        err=True,
-    )
-    raise typer.Exit(EXIT_NOT_IMPLEMENTED)
 
 
 def _version_callback(value: bool) -> None:
@@ -442,31 +439,226 @@ def materialize(
         typer.echo(f"Post-execute sample verified: {summary.sample_checked} file(s).")
 
 
+def _run_verify_command(ctx: typer.Context, checksums_only: bool) -> None:
+    wt = _working_tree(ctx)
+    log = configure_logging(wt.logs_dir, stage="verify")
+    conn = open_catalog(wt.catalog_path)
+    stage = "maintain-verify-checksums" if checksums_only else "verify"
+    try:
+        with record_run(conn, stage, {"checksums_only": checksums_only}):
+            result = run_verify(conn, wt, log, checksums_only=checksums_only)
+    except VerifyError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+
+    typer.echo(
+        f"Checked {result.archive_checked} archive and {result.quarantine_checked}"
+        f" quarantine file(s) ({result.bytes_archive + result.bytes_quarantine:,}"
+        f" bytes); {result.excluded_count} excluded; {result.placements_total}"
+        f"/{result.instances_total} instances placed."
+    )
+    if result.quarantine_purged:
+        typer.echo("Quarantine was purged; its file checks were skipped.")
+    if result.passed:
+        typer.secho("VERIFICATION PASSED (conservation law holds).", fg=typer.colors.GREEN)
+        typer.echo(f"Report: {wt.reports_dir / VERIFY_REPORT}")
+        return
+    typer.secho(
+        f"VERIFICATION FAILED: {result.discrepancy_count} discrepanc(ies).",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    for d in result.discrepancies[:20]:
+        typer.secho(f"  [{d.kind}] {d.subject}: {d.detail}", err=True)
+    if result.discrepancy_count > 20:
+        typer.secho(
+            f"  ... {result.discrepancy_count - 20} more in the report.", err=True
+        )
+    typer.echo(f"Full report: {wt.reports_dir / VERIFY_REPORT}", err=True)
+    raise typer.Exit(1)
+
+
 @app.command()
 def verify(ctx: typer.Context) -> None:
-    """Prove the conservation law and verify checksums (M8)."""
-    _not_implemented("verify", "M8")
+    """Prove the conservation law (INV-3) and verify all checksums (Stage 7)."""
+    _run_verify_command(ctx, checksums_only=False)
 
 
 @app.command()
 def report(ctx: typer.Context) -> None:
-    """Human-readable summary of the whole pipeline state (M8)."""
-    _not_implemented("report", "M8")
+    """Human-readable summary of the whole pipeline state (Stage 7)."""
+    wt = _working_tree(ctx)
+    conn = open_catalog(wt.catalog_path)
+    try:
+        stats = collect_stats(conn)
+    finally:
+        conn.close()
+
+    def _section(title: str, pairs: dict[str, object]) -> None:
+        typer.secho(title, bold=True)
+        for key, value in sorted(pairs.items()):
+            typer.echo(f"  {key}: {value}")
+
+    _section("Instances", {"total": stats["instances"]["total"]})
+    _section("  by kind", stats["instances"]["by_kind"])
+    _section("  by source", stats["instances"]["by_source"])
+    _section("Placements", stats["placements"]["by_disposition"])
+    _section("  source bytes", stats["placements"]["source_bytes_by_disposition"])
+    _section("Dates by status", stats["dates"]["by_status"])
+    _section("Dates by source", stats["dates"]["by_source"])
+    _section("Dates by precision", stats["dates"]["by_precision"])
+    _section("Clusters by kind", stats["clusters"]["by_kind"])
+    _section("Clusters by status", stats["clusters"]["by_status"])
+    _section("Cluster size histogram", stats["clusters"]["size_histogram"])
+    _section("Decisions by actor", stats["decisions"]["by_actor"])
+    _section("Decisions by stage", stats["decisions"]["by_stage"])
+    if stats["takeout_only_videos"]:
+        typer.secho("Takeout-only videos (Google held these uniquely):", bold=True)
+        for rel in stats["takeout_only_videos"]:
+            typer.echo(f"  {rel}")
+    _section(
+        "Last run per stage",
+        {stage: f"{r['status']} ({r['finished'] or 'running'})"
+         for stage, r in stats["runs"].items()},
+    )
+    verify_report = wt.reports_dir / VERIFY_REPORT
+    if verify_report.is_file():
+        payload = json.loads(verify_report.read_text(encoding="utf-8"))
+        state = "PASSED" if payload.get("passed") else "FAILED"
+        typer.echo(f"Last verify: {state} at {payload.get('generated')}")
+    else:
+        typer.echo("Last verify: never run.")
 
 
 @maintain_app.command("verify-checksums")
 def maintain_verify_checksums(ctx: typer.Context) -> None:
-    """Periodic checksum re-verification of the archive (M8)."""
-    _not_implemented("maintain verify-checksums", "M8")
+    """Periodic (cron-able) checksum re-verification of archive + quarantine."""
+    _run_verify_command(ctx, checksums_only=True)
 
 
 @maintain_app.command("import")
 def maintain_import(
     ctx: typer.Context,
     root: Annotated[Path, typer.Option("--root", help="New photos to import incrementally.")],
+    source_id: Annotated[
+        str | None,
+        typer.Option("--source-id", help="Catalog source id (default IMPORT:<root name>)."),
+    ] = None,
 ) -> None:
-    """Incrementally import new photos through the full pipeline (M8)."""
-    _not_implemented("maintain import", "M8")
+    """Incrementally import new photos: ingest -> dates -> dedup-against-archive."""
+    wt = _working_tree(ctx)
+    cfg = _load_config_or_exit(wt)
+    if not cfg.preserve.confirmed:
+        typer.secho(PRESERVE_REMINDER, fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    root = root.expanduser().resolve()
+    sid = source_id or f"IMPORT:{root.name}"
+    log = configure_logging(wt.logs_dir, stage="maintain-import")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "maintain-import", {"source": sid, "root": str(root)}) as run_id:
+            ingest = ingest_source(conn, cfg, sid, root, run_id, log)
+            classify_local(conn, cfg, wt, log)
+            dates = resolve_dates(conn, cfg, wt, log)
+            dedup_summary = run_dedup(conn, cfg, wt, log)
+    except (IngestError, ProvenanceError, DateResolveError, DedupError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+    typer.echo(
+        f"Imported {sid}: {ingest.processed} new/changed file(s);"
+        f" {dates.by_status.get('conflict', 0)} date conflict(s);"
+        f" {dedup_summary.pending_review} cluster(s) awaiting review."
+    )
+    typer.echo(
+        "Next: resolve any conflicts/clusters in `archive review serve`, then"
+        " `archive materialize` (dry-run) and `--execute`."
+    )
+
+
+PURGE_PHRASE = "PURGE QUARANTINE"
+
+
+@maintain_app.command("purge-quarantine")
+def maintain_purge_quarantine(ctx: typer.Context) -> None:
+    """Destroy quarantined files. Manual, gated on a passing verify (Stage 8)."""
+    wt = _working_tree(ctx)
+    report_path = wt.reports_dir / VERIFY_REPORT
+    if not report_path.is_file():
+        typer.secho(
+            "Refusing: no verify report. Run `archive verify` first.",
+            fg=typer.colors.RED, err=True,
+        )
+        raise typer.Exit(1)
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    if not payload.get("passed"):
+        typer.secho(
+            "Refusing: the last verify FAILED. Fix discrepancies first.",
+            fg=typer.colors.RED, err=True,
+        )
+        raise typer.Exit(1)
+    marker = wt.quarantine_dir / PURGED_MARKER
+    files = [
+        p for p in sorted(wt.quarantine_dir.rglob("*"))
+        if p.is_file() and p.name not in (PURGED_MARKER,)
+    ]
+    if not files:
+        typer.echo("Quarantine is already empty.")
+        raise typer.Exit(0)
+    total_bytes = sum(p.stat().st_size for p in files)
+    typer.secho(
+        f"This will PERMANENTLY DESTROY {len(files)} file(s)"
+        f" ({total_bytes:,} bytes) under {wt.quarantine_dir}:",
+        fg=typer.colors.RED,
+    )
+    for p in files[:10]:
+        typer.echo(f"  {p.relative_to(wt.quarantine_dir)}")
+    if len(files) > 10:
+        typer.echo(f"  ... and {len(files) - 10} more")
+    typer.echo(
+        "Recommendation: purge no sooner than 6 months after verify passes and"
+        " 3-2-1 backups of archive/ + catalog.db + reports/ exist."
+    )
+    typed = typer.prompt(f"Type '{PURGE_PHRASE}' to proceed")
+    if typed.strip() != PURGE_PHRASE:
+        typer.secho("Aborted: phrase did not match. Nothing was deleted.",
+                    fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
+    log = configure_logging(wt.logs_dir, stage="purge-quarantine")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "purge-quarantine", {"files": len(files),
+                                                   "bytes": total_bytes}):
+            for p in files:
+                p.unlink()
+            marker.write_text(
+                json.dumps(
+                    {"purged_at": _utcnow_iso(), "files": len(files),
+                     "bytes": total_bytes},
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            with conn:
+                conn.execute(
+                    "INSERT INTO decision (ts, stage, subject, rule, detail, actor)"
+                    " VALUES (?, 'purge-quarantine', 'quarantine', 'purge.confirmed',"
+                    " ?, 'review:user')",
+                    (_utcnow_iso(),
+                     json.dumps({"files": len(files), "bytes": total_bytes})),
+                )
+            log.info("quarantine purged",
+                     extra={"files": len(files), "bytes": total_bytes})
+    finally:
+        conn.close()
+    typer.echo(f"Purged {len(files)} file(s). Marker written: {marker}")
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
 @fixtures_app.command("generate")

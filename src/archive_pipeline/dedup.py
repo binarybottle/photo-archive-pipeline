@@ -202,6 +202,7 @@ class Media:
     gps_lon: float | None
     content_identifier: str | None
     effective_trust: str  # curated | takeout
+    archived: bool  # already materialized to the archive (placement ledger)
     google_recompressed: bool
     trusted_dto: bool  # camera DTO present with no distrust flags
     resolved_date: str | None
@@ -442,7 +443,7 @@ def keyword_candidates(
         ...     kind="image", sha256="x", size_bytes=1, width=None, height=None,
         ...     phash=None, dhash=None, video_sig=None, exif_tag_count=0,
         ...     exif_dto=None, camera_model=None, gps_lat=None, gps_lon=None,
-        ...     content_identifier=None, effective_trust="curated",
+        ...     content_identifier=None, effective_trust="curated", archived=False,
         ...     google_recompressed=False, trusted_dto=False, resolved_date=None,
         ...     resolved_precision=None, resolved_source=None)
         >>> keyword_candidates([m], {}, ())
@@ -509,8 +510,10 @@ def _load_media(conn: sqlite3.Connection) -> list[Media]:
         " i.exif_dto, i.camera_model, i.gps_lat, i.gps_lon, i.exif_json,"
         " i.effective_trust,"
         " i.google_recompressed, d.resolved_date, d.resolved_precision,"
-        " d.resolved_source, d.exif_flags, d.status AS dr_status"
+        " d.resolved_source, d.exif_flags, d.status AS dr_status,"
+        " (p.disposition = 'archive' AND p.verified_ok = 1) AS archived"
         " FROM instance i LEFT JOIN date_resolution d ON d.instance_id = i.id"
+        " LEFT JOIN placement p ON p.instance_id = i.id"
         " WHERE i.kind IN ('image', 'video') ORDER BY i.source, i.rel_path"
     ).fetchall()
     missing = [r["rel_path"] for r in rows if r["dr_status"] is None]
@@ -535,6 +538,7 @@ def _load_media(conn: sqlite3.Connection) -> list[Media]:
                 gps_lat=r["gps_lat"], gps_lon=r["gps_lon"],
                 content_identifier=content_identifier(exif),
                 effective_trust=r["effective_trust"] or "curated",
+                archived=bool(r["archived"]),
                 google_recompressed=bool(r["google_recompressed"]),
                 trusted_dto=bool(r["exif_dto"]) and not distrust,
                 resolved_date=r["resolved_date"],
@@ -568,7 +572,14 @@ def _banded_candidates(reps: list[Media]) -> set[tuple[int, int]]:
 
 
 def _tiebreak_key(m: Media) -> tuple[Any, ...]:
-    return (0 if m.effective_trust == "curated" else 1, m.source, m.rel_path)
+    # Already-archived instances win ties so incremental imports never churn
+    # the archive with byte-identical newcomers (INV-5 stability).
+    return (
+        0 if m.archived else 1,
+        0 if m.effective_trust == "curated" else 1,
+        m.source,
+        m.rel_path,
+    )
 
 
 def _plan_cluster(
