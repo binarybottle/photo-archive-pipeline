@@ -316,9 +316,32 @@ def date_resolve(
 
 
 @review_app.command("serve")
-def review_serve(ctx: typer.Context) -> None:
-    """Serve the local review UI on 127.0.0.1 (M5)."""
-    _not_implemented("review serve", "M5")
+def review_serve(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option("--port", help="TCP port on 127.0.0.1.")] = 8765,
+) -> None:
+    """Serve the local review UI (Stage 4). Binds to 127.0.0.1 only."""
+    import uvicorn
+
+    from archive_pipeline.review.app import create_app
+
+    wt = _working_tree(ctx)
+    if not wt.catalog_path.is_file():
+        typer.secho(
+            f"no catalog at {wt.catalog_path} (run `archive init` and the pipeline"
+            " stages first)",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    configure_logging(wt.logs_dir, stage="review")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "review", {"port": port}):
+            typer.echo(f"Review UI at http://127.0.0.1:{port} — Ctrl-C to stop.")
+            uvicorn.run(create_app(wt), host="127.0.0.1", port=port, log_level="warning")
+    finally:
+        conn.close()
 
 
 @app.command()

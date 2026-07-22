@@ -11,6 +11,10 @@ dependencies = [
     "pyexiftool (>=0.5.6,<0.6.0)",
     "imagehash (>=4.3.2,<5.0.0)",
     "pillow-heif (>=1.4.0,<2.0.0)",
+    "fastapi (>=0.139.2,<0.140.0)",
+    "jinja2 (>=3.1.6,<4.0.0)",
+    "uvicorn (>=0.51.0,<0.52.0)",
+    "python-multipart (>=0.0.32,<0.0.33)",
 ]
 
 [project.scripts]
@@ -24,6 +28,7 @@ pytest = ">=8.2"
 hypothesis = ">=6.100"
 ruff = ">=0.5"
 mypy = ">=1.10"
+httpx = "^0.28.1"
 
 [build-system]
 requires = ["poetry-core>=2.0"]
@@ -38,6 +43,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's documented dependency-injection idiom uses Depends() in defaults.
+"src/archive_pipeline/review/app.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.12"

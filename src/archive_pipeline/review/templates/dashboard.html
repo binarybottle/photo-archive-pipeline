@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — archive review{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="card">
+  <p><strong>{{ conflicts }}</strong> date conflict(s) awaiting review
+     — <a href="/dates">open queue</a></p>
+  <p><strong>{{ reviewed }}</strong> date resolution(s) already reviewed.</p>
+  <p><strong>{{ clusters_pending }}</strong> duplicate cluster(s) awaiting review
+     — <a href="/clusters">open queue</a></p>
+</div>
+<p class="muted">Working tree: {{ working_tree }}</p>
+{% endblock %}

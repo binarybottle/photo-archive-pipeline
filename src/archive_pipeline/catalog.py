@@ -170,25 +170,36 @@ CREATE TABLE local_provenance (
 );
 """
 
+SCHEMA_V5 = """
+-- Review UI (Stage 4): intra-day ordering for scanned batches, written to
+-- XMP-ArchivePipe:SequenceHint at materialize.
+ALTER TABLE date_resolution ADD COLUMN sequence_hint INTEGER;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
     Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
     Migration(3, "takeout normalization tables (Stage 2)", SCHEMA_V3),
     Migration(4, "local provenance classification (Stage 2b)", SCHEMA_V4),
+    Migration(5, "date_resolution.sequence_hint for review (Stage 4)", SCHEMA_V5),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+def connect(db_path: Path, *, cross_thread: bool = False) -> sqlite3.Connection:
     """Open the catalog with WAL mode and foreign keys enforced.
+
+    ``cross_thread=True`` disables sqlite's same-thread check for consumers
+    (the review app) whose framework may hand one request's connection between
+    worker threads; each connection is still used by one request at a time.
 
     Usage:
         >>> conn = connect(Path("catalog.db"))  # doctest: +SKIP
         >>> conn.execute("PRAGMA foreign_keys").fetchone()[0]  # doctest: +SKIP
         1
     """
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=not cross_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
@@ -228,12 +239,12 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
     return applied
 
 
-def open_catalog(db_path: Path) -> sqlite3.Connection:
+def open_catalog(db_path: Path, *, cross_thread: bool = False) -> sqlite3.Connection:
     """Connect to the catalog and bring its schema up to date.
 
     Usage:
         >>> conn = open_catalog(Path("catalog.db"))  # doctest: +SKIP
     """
-    conn = connect(db_path)
+    conn = connect(db_path, cross_thread=cross_thread)
     migrate(conn)
     return conn

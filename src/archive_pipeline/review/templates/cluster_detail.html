@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Cluster {{ cluster.id }} — archive review{% endblock %}
+{% block content %}
+<h1>Cluster {{ cluster.id }} <span class="pill">{{ cluster.kind }}</span>
+    <span class="pill">{{ cluster.status }}</span></h1>
+<form method="post" action="/clusters/{{ cluster.id }}/action">
+  <table>
+    <tr><th></th><th>Preview</th><th>Instance</th><th>Role</th><th>Score</th>
+        <th>Breakdown</th></tr>
+    {% for m in members %}
+    <tr>
+      <td><input type="radio" name="winner" value="{{ m.instance_id }}"
+                 {% if m.instance_id == cluster.winner_instance_id %}checked{% endif %}></td>
+      <td><img class="thumb" src="/thumb/{{ m.instance_id }}" alt=""></td>
+      <td>{{ m.source }}<br>{{ m.rel_path }}
+          <div class="muted">{{ m.width }}×{{ m.height }} · {{ m.size_bytes }} bytes</div></td>
+      <td>{{ m.role }}</td>
+      <td>{{ "%.2f" | format(m.score) if m.score is not none else "—" }}</td>
+      <td class="muted">{{ m.score_breakdown or "" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p>
+    <button name="action" value="accept">Accept winner</button>
+    <button name="action" value="swap">Make selected the winner</button>
+    <button name="action" value="not_duplicate">Not a duplicate</button>
+  </p>
+</form>
+<p><a href="/clusters">← back to clusters</a></p>
+{% endblock %}

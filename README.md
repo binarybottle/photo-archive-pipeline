@@ -8,7 +8,7 @@ working in this repo live in `CLAUDE.md`.
 
 ## Status
 
-Milestone **M4 (date resolution)** complete. Working today:
+Milestone **M5 (review UI)** complete. Working today:
 
 - `archive ingest` (M2): full source inventory — streamed SHA-256, signature MIME,
   exiftool batch EXIF, perceptual hashes, video keyframe signatures (needs ffmpeg),
@@ -25,8 +25,15 @@ Milestone **M4 (date resolution)** complete. Working today:
   distrust heuristics (epoch defaults, mass-identical, camera era, scan-date,
   CreateDate-only scans), rules R1–R7 with full decision logging, reviewed rows
   preserved, and `reports/date_audit_sample.csv` for user audit.
+- `archive review serve` (M5, Stage 4): local web UI on 127.0.0.1 — date-conflict
+  queue grouped by folder with thumbnails, per-item candidate/flag detail with
+  same-folder and same-camera filmstrips, accept-candidate / manual date with
+  precision / SequenceHint, batch "apply folder date" and "trust EXIF", plus a
+  duplicate-cluster queue (accept / swap winner / not-a-duplicate; populated
+  once `archive dedup` lands in M6). Every action appends to the decision log
+  as `review:user`; reviewed rows survive re-resolution.
 
-Stages review onward are stubs that name their milestone.
+Stages dedup onward are stubs that name their milestone.
 
 ## Setup
 
@@ -50,6 +57,7 @@ poetry run archive --working-tree /tmp/archive-demo takeout-normalize
 poetry run archive --working-tree /tmp/archive-demo local-provenance
 # ... review /tmp/archive-demo/reports/local_provenance.csv, set overrides ...
 poetry run archive --working-tree /tmp/archive-demo date-resolve
+poetry run archive --working-tree /tmp/archive-demo review serve   # http://127.0.0.1:8765
 ```
 
 Ingest refuses to run until the Stage 0 preserve gate (`preserve.confirmed` in

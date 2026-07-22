@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Duplicate clusters — archive review{% endblock %}
+{% block content %}
+<h1>Duplicate clusters awaiting review ({{ total }})</h1>
+{% if not clusters %}
+<p>No clusters awaiting review{% if none_yet %} — run <code>archive dedup</code> first{% endif %}.</p>
+{% endif %}
+<table>
+  {% for c in clusters %}
+  <tr>
+    <td><a href="/clusters/{{ c.id }}">cluster {{ c.id }}</a></td>
+    <td><span class="pill">{{ c.kind }}</span></td>
+    <td>{{ c.members }} member(s)</td>
+    <td class="muted">winner: {{ c.winner_path or "—" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

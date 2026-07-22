@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Date conflicts — archive review{% endblock %}
+{% block content %}
+<h1>Date conflicts ({{ total }})</h1>
+{% if not groups %}<p>No conflicts. 🎉</p>{% endif %}
+{% for group in groups %}
+<div class="card">
+  <h2>{{ group.source }} / {{ group.dir or "(root)" }}
+      <span class="pill">{{ group.entries | length }} item(s)</span></h2>
+  <form class="inline" method="post" action="/dates/batch">
+    <input type="hidden" name="source" value="{{ group.source }}">
+    <input type="hidden" name="dir_path" value="{{ group.dir }}">
+    <button name="action" value="folder">Apply folder date to all</button>
+    <button name="action" value="exif">Trust EXIF for all</button>
+  </form>
+  <div class="strip">
+    {% for item in group.entries %}
+    <a href="/dates/item/{{ item.id }}" title="{{ item.rel_path }}">
+      <img class="thumb" src="/thumb/{{ item.id }}" alt="{{ item.rel_path }}">
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

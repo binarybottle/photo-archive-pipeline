@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Archive review{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1.5rem auto; max-width: 1100px;
+           padding: 0 1rem; color: #222; }
+    nav { margin-bottom: 1.5rem; border-bottom: 1px solid #ddd; padding-bottom: .75rem; }
+    nav a { margin-right: 1rem; text-decoration: none; color: #0645ad; }
+    h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: .3rem .6rem; border-bottom: 1px solid #eee;
+             vertical-align: top; }
+    .thumb { height: 90px; border: 1px solid #ccc; border-radius: 3px; }
+    .thumb.small { height: 60px; }
+    .strip { display: flex; gap: .4rem; overflow-x: auto; padding: .4rem 0; }
+    .strip .current { outline: 3px solid #0645ad; }
+    form.inline { display: inline; }
+    button { cursor: pointer; padding: .2rem .7rem; }
+    .muted { color: #777; font-size: .85rem; }
+    .flag { background: #fee; color: #a00; border-radius: 3px; padding: 0 .35rem;
+            font-size: .8rem; margin-left: .3rem; }
+    .pill { background: #eef; border-radius: 3px; padding: 0 .4rem; font-size: .85rem; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: .8rem 1rem;
+            margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <nav>
+    <strong>Archive review</strong>
+    <a href="/">Dashboard</a>
+    <a href="/dates">Date conflicts</a>
+    <a href="/clusters">Duplicate clusters</a>
+  </nav>
+  {% block content %}{% endblock %}
+</body>
+</html>

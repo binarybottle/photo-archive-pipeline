@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ item.rel_path }} — archive review{% endblock %}
+{% block content %}
+<h1>{{ item.rel_path }}</h1>
+<p class="muted">
+  {{ item.source }} · {{ item.camera_make or "?" }} {{ item.camera_model or "" }}
+  · status <span class="pill">{{ item.status }}</span>
+  {% for flag in flags %}<span class="flag">{{ flag }}</span>{% endfor %}
+</p>
+<p><img class="thumb" style="height: 240px" src="/thumb/{{ item.id }}" alt=""></p>
+
+<div class="card">
+  <h2>Candidates</h2>
+  <table>
+    <tr><th>Source</th><th>Value</th><th></th></tr>
+    {% for cand in candidates %}
+    <tr>
+      <td>{{ cand.label }}</td>
+      <td>{{ cand.value or "—" }}{% if cand.note %} <span class="muted">({{ cand.note }})</span>{% endif %}</td>
+      <td>
+        {% if cand.value %}
+        <form class="inline" method="post" action="/dates/item/{{ item.id }}/resolve">
+          <button name="candidate" value="{{ cand.key }}">Accept</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>Manual date</h2>
+  <form method="post" action="/dates/item/{{ item.id }}/resolve">
+    <input name="manual_date" placeholder="YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS"
+           size="24" value="{{ item.resolved_date or '' }}">
+    <select name="precision">
+      {% for p in ("second", "day", "month", "year") %}
+      <option value="{{ p }}" {% if item.resolved_precision == p %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+    <button>Set date</button>
+  </form>
+  <form method="post" action="/dates/item/{{ item.id }}/sequence" style="margin-top:.5rem">
+    <label>Sequence hint (intra-day order):
+      <input name="hint" size="5" value="{{ item.sequence_hint if item.sequence_hint is not none else '' }}">
+    </label>
+    <button>Set hint</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Same folder</h2>
+  <div class="strip">
+    {% for n in folder_strip %}
+    <a href="/dates/item/{{ n.id }}" title="{{ n.rel_path }}">
+      <img class="thumb small {% if n.id == item.id %}current{% endif %}"
+           src="/thumb/{{ n.id }}" alt="">
+    </a>
+    {% endfor %}
+  </div>
+  {% if camera_strip %}
+  <h2>Same camera, ±1 hour</h2>
+  <div class="strip">
+    {% for n in camera_strip %}
+    <a href="/dates/item/{{ n.id }}" title="{{ n.rel_path }} ({{ n.exif_dto }})">
+      <img class="thumb small" src="/thumb/{{ n.id }}" alt="">
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+<p><a href="/dates">← back to queue</a></p>
+{% endblock %}
