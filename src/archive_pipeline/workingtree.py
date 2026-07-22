@@ -55,6 +55,10 @@ class WorkingTree:
         return self.root / "logs"
 
     @property
+    def staging_dir(self) -> Path:
+        return self.root / "staging"
+
+    @property
     def subdirs(self) -> tuple[Path, ...]:
         return (
             self.archive_dir,
@@ -62,6 +66,7 @@ class WorkingTree:
             self.review_dir,
             self.reports_dir,
             self.logs_dir,
+            self.staging_dir,
         )
 
 

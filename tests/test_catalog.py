@@ -49,7 +49,9 @@ def test_wal_and_foreign_keys_enabled(db_path: Path) -> None:
 
 def test_migrate_is_idempotent(db_path: Path) -> None:
     conn = connect(db_path)
-    assert migrate(conn) == [LATEST_SCHEMA_VERSION]
+    applied = migrate(conn)
+    assert applied == sorted(applied)
+    assert applied[-1] == LATEST_SCHEMA_VERSION
     assert migrate(conn) == []
     conn.close()
     reopened = open_catalog(db_path)

@@ -119,8 +119,16 @@ class Migration:
     sql: str
 
 
+SCHEMA_V2 = """
+-- Ingest resumability (skip on matching size+mtime) and per-instance flags
+-- (JSON list: corrupt, zero_byte, mime_from_extension, no_ffprobe, ...).
+ALTER TABLE instance ADD COLUMN mtime_ns INTEGER;
+ALTER TABLE instance ADD COLUMN flags TEXT;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
+    Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

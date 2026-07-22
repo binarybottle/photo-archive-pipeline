@@ -1,6 +1,7 @@
 """CLI tests: init, preserve gate, stage stubs, logging output."""
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from typer.testing import CliRunner
 
 from archive_pipeline.catalog import LATEST_SCHEMA_VERSION, open_catalog, schema_version
 from archive_pipeline.cli import EXIT_NOT_IMPLEMENTED, app
+from archive_pipeline.fixtures.generator import generate_corpus
 
 runner = CliRunner()
 
@@ -63,7 +65,30 @@ def test_ingest_refuses_without_preserve_gate(wt_root: Path) -> None:
     assert "preserve.confirmed" in result.output
 
 
-def test_ingest_with_gate_reaches_stub(wt_root: Path) -> None:
+@pytest.mark.skipif(shutil.which("exiftool") is None, reason="exiftool not installed")
+def test_ingest_end_to_end(wt_root: Path, tmp_path: Path) -> None:
+    _init(wt_root)
+    config = wt_root / "config.toml"
+    text = config.read_text(encoding="utf-8")
+    text = text.replace("confirmed = false", "confirmed = true")
+    text = text.replace("parallelism = 0", "parallelism = 1")
+    config.write_text(text, encoding="utf-8")
+    corpus = tmp_path / "corpus"
+    generate_corpus(corpus, seed=0)
+    result = runner.invoke(
+        app,
+        [
+            "--working-tree", str(wt_root),
+            "ingest", "--source", "LOCAL", "--root", str(corpus / "LOCAL"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Ingested LOCAL: 13 files on disk" in result.output
+    conn = open_catalog(wt_root / "catalog.db")
+    assert conn.execute("SELECT COUNT(*) FROM instance").fetchone()[0] == 13
+
+
+def test_export_id_rejected_for_local(wt_root: Path) -> None:
     _init(wt_root)
     config = wt_root / "config.toml"
     config.write_text(
@@ -71,10 +96,13 @@ def test_ingest_with_gate_reaches_stub(wt_root: Path) -> None:
     )
     result = runner.invoke(
         app,
-        ["--working-tree", str(wt_root), "ingest", "--source", "LOCAL", "--root", str(wt_root)],
+        [
+            "--working-tree", str(wt_root),
+            "ingest", "--source", "LOCAL", "--root", str(wt_root), "--export-id", "x",
+        ],
     )
-    assert result.exit_code == EXIT_NOT_IMPLEMENTED
-    assert "M2" in result.output
+    assert result.exit_code == 1
+    assert "--export-id" in result.output
 
 
 def test_ingest_without_init_explains(wt_root: Path) -> None:

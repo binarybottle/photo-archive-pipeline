@@ -8,9 +8,12 @@ working in this repo live in `CLAUDE.md`.
 
 ## Status
 
-Milestone **M1 (skeleton)** complete: Poetry project, `archive` CLI scaffold, config
-loading, catalog schema + migrations, structured JSONL logging, run bookkeeping, and
-fixture generator v0. Stages ingest onward are stubs that name their milestone.
+Milestone **M2 (ingest)** complete: full source inventory with streamed SHA-256,
+signature-based MIME + kind classification, exiftool batch EXIF extraction,
+perceptual hashes (pHash/dHash, orientation-normalized), video keyframe signatures
+(needs ffmpeg), Takeout zip staging with disk-space preflight, and size+mtime
+resumability (re-runs are no-ops). Stages takeout-normalize onward are stubs that
+name their milestone.
 
 ## Setup
 
@@ -22,14 +25,19 @@ poetry install
 poetry run pytest
 ```
 
-## Demo (M1)
+## Demo (M2)
 
 ```
 poetry run archive --working-tree /tmp/archive-demo init
+# ... make your Stage 0 backup, then set preserve.confirmed = true in config.toml ...
 poetry run archive fixtures generate --dest /tmp/archive-fixtures --seed 42
 poetry run archive --working-tree /tmp/archive-demo ingest --source LOCAL --root /tmp/archive-fixtures/LOCAL
+poetry run archive --working-tree /tmp/archive-demo ingest --source TAKEOUT --root /tmp/archive-fixtures/TAKEOUT --export-id t2015
 ```
 
-The last command refuses to run: the Stage 0 preserve gate
-(`preserve.confirmed` in `config.toml`) must be set to `true` by you, after you
-have made a verbatim backup of all sources on a separate physical disk.
+Ingest refuses to run until the Stage 0 preserve gate (`preserve.confirmed` in
+`config.toml`) is set to `true` by you, after a verbatim backup of all sources
+exists on a separate physical disk. A `--root` pointing at a Takeout `.zip` is
+staged (extracted once, space-checked) into the working tree automatically.
+Re-running an ingest is a no-op; every run ends with a random-sample hash
+verification.

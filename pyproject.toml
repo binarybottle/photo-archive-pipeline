@@ -8,6 +8,9 @@ requires-python = ">=3.12,<4.0"
 dependencies = [
     "typer (>=0.12)",
     "pillow (>=11.3)",
+    "pyexiftool (>=0.5.6,<0.6.0)",
+    "imagehash (>=4.3.2,<5.0.0)",
+    "pillow-heif (>=1.4.0,<2.0.0)",
 ]
 
 [project.scripts]
@@ -42,5 +45,5 @@ files = ["src"]
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["PIL.*"]
+module = ["PIL.*", "exiftool.*", "imagehash", "pillow_heif"]
 ignore_missing_imports = true

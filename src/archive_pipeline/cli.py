@@ -23,8 +23,11 @@ from archive_pipeline import __version__
 from archive_pipeline.catalog import open_catalog, schema_version
 from archive_pipeline.config import Config, ConfigError, load_config
 from archive_pipeline.fixtures.generator import generate_corpus
+from archive_pipeline.ingest import IngestError, ingest_source
 from archive_pipeline.logs import configure_logging
 from archive_pipeline.runs import record_run
+from archive_pipeline.space import SpaceError
+from archive_pipeline.staging import StagingError, stage_takeout_zip
 from archive_pipeline.workingtree import WorkingTree, init_working_tree
 
 app = typer.Typer(
@@ -142,15 +145,66 @@ def init(ctx: typer.Context) -> None:
 def ingest(
     ctx: typer.Context,
     source: Annotated[SourceKind, typer.Option("--source", help="Source kind.")],
-    root: Annotated[Path, typer.Option("--root", help="Source root directory (read-only).")],
+    root: Annotated[
+        Path, typer.Option("--root", help="Source root directory, or a Takeout zip (read-only).")
+    ],
+    export_id: Annotated[
+        str | None,
+        typer.Option(
+            "--export-id",
+            help="TAKEOUT only: identifier for this export (default: root's name).",
+        ),
+    ] = None,
 ) -> None:
-    """Inventory every file in a source root (M2)."""
+    """Inventory every file in a source root into the catalog (Stage 1)."""
     wt = _working_tree(ctx)
     cfg = _load_config_or_exit(wt)
     if not cfg.preserve.confirmed:
         typer.secho(PRESERVE_REMINDER, fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
-    _not_implemented("ingest", "M2")
+    if source is SourceKind.LOCAL and export_id is not None:
+        typer.secho("--export-id only applies to --source TAKEOUT", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    root = root.expanduser().resolve()
+    source_id = "LOCAL" if source is SourceKind.LOCAL else f"TAKEOUT:{export_id or root.stem}"
+    log = configure_logging(wt.logs_dir, stage="ingest")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        if source is SourceKind.TAKEOUT and root.is_file():
+            try:
+                root = stage_takeout_zip(
+                    root, wt.staging_dir, export_id or root.stem, cfg.space.margin_pct
+                )
+            except (StagingError, SpaceError) as exc:
+                typer.secho(str(exc), fg=typer.colors.RED, err=True)
+                raise typer.Exit(1) from exc
+            typer.echo(f"Takeout zip staged at {root}")
+        try:
+            with record_run(
+                conn, "ingest", {"source": source_id, "root": str(root)}
+            ) as run_id:
+                summary = ingest_source(conn, cfg, source_id, root, run_id, log)
+        except IngestError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+
+    kinds = ", ".join(f"{kind}={n}" for kind, n in sorted(summary.by_kind.items()))
+    typer.echo(
+        f"Ingested {source_id}: {summary.discovered} files on disk,"
+        f" {summary.processed} processed, {summary.skipped_unchanged} unchanged,"
+        f" {summary.corrupt} corrupt."
+    )
+    typer.echo(f"Catalog rows: {summary.catalog_count} ({kinds});"
+               f" sample-verified {summary.sample_checked} hashes.")
+    if summary.missing_from_disk:
+        typer.secho(
+            f"WARNING: {summary.missing_from_disk} cataloged file(s) missing from disk"
+            " — sources should never change; see logs.",
+            fg=typer.colors.YELLOW,
+        )
 
 
 @app.command("takeout-normalize")
