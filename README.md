@@ -8,7 +8,7 @@ working in this repo live in `CLAUDE.md`.
 
 ## Status
 
-Milestone **M5 (review UI)** complete. Working today:
+Milestone **M6 (dedup)** complete. Working today:
 
 - `archive ingest` (M2): full source inventory — streamed SHA-256, signature MIME,
   exiftool batch EXIF, perceptual hashes, video keyframe signatures (needs ffmpeg),
@@ -29,11 +29,19 @@ Milestone **M5 (review UI)** complete. Working today:
   queue grouped by folder with thumbnails, per-item candidate/flag detail with
   same-folder and same-camera filmstrips, accept-candidate / manual date with
   precision / SequenceHint, batch "apply folder date" and "trust EXIF", plus a
-  duplicate-cluster queue (accept / swap winner / not-a-duplicate; populated
-  once `archive dedup` lands in M6). Every action appends to the decision log
-  as `review:user`; reviewed rows survive re-resolution.
+  duplicate-cluster queue (accept / swap winner / split out / not-a-duplicate).
+  Every action appends to the decision log as `review:user`; reviewed rows
+  survive re-resolution.
+- `archive dedup` (M6, Stage 5): exact clusters by SHA-256, RAW+JPEG and
+  Live-photo companion pairing, banded-pHash near-image clustering with dHash +
+  aspect confirmation and a possible-duplicate review band, conservative
+  near-video matching (never auto-discarded), the spec winner-score formula
+  with logged breakdowns, guardrails (score margin, takeout-over-curated,
+  crop aspect mismatch), field-level metadata merge planning (date provenance
+  priority, GPS with camera-EXIF preference, description/title/keyword
+  unions), review locking, and `reports/cluster_audit_sample.csv`.
 
-Stages dedup onward are stubs that name their milestone.
+Stages materialize onward are stubs that name their milestone.
 
 ## Setup
 
@@ -57,6 +65,7 @@ poetry run archive --working-tree /tmp/archive-demo takeout-normalize
 poetry run archive --working-tree /tmp/archive-demo local-provenance
 # ... review /tmp/archive-demo/reports/local_provenance.csv, set overrides ...
 poetry run archive --working-tree /tmp/archive-demo date-resolve
+poetry run archive --working-tree /tmp/archive-demo dedup
 poetry run archive --working-tree /tmp/archive-demo review serve   # http://127.0.0.1:8765
 ```
 

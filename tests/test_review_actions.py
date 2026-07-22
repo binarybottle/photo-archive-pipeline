@@ -13,6 +13,7 @@ from archive_pipeline.review.actions import (
     batch_apply,
     cluster_accept,
     cluster_not_duplicate,
+    cluster_split,
     cluster_swap_winner,
     resolve_manual,
     set_sequence_hint,
@@ -215,3 +216,42 @@ def test_cluster_not_duplicate(conn: sqlite3.Connection) -> None:
     assert roles == {"not_duplicate"}
     with pytest.raises(ReviewError, match="no cluster"):
         cluster_accept(conn, 999)
+
+
+def test_cluster_split_member_out(conn: sqlite3.Connection) -> None:
+    a, b, c = (_instance(conn, n) for n in ("a.jpg", "b.jpg", "c.jpg"))
+    cid = _cluster(conn, a, b)
+    conn.execute(
+        "INSERT INTO cluster_member (cluster_id, instance_id, role, score)"
+        " VALUES (?, ?, 'loser', 2.0)",
+        (cid, c),
+    )
+    new_cid = cluster_split(conn, cid, c)
+    new_cluster = conn.execute(
+        "SELECT * FROM cluster WHERE id = ?", (new_cid,)
+    ).fetchone()
+    assert (new_cluster["status"], new_cluster["winner_instance_id"]) == ("reviewed", c)
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM cluster_member WHERE cluster_id = ?", (cid,)
+    ).fetchone()[0]
+    assert remaining == 2
+    original = conn.execute("SELECT * FROM cluster WHERE id = ?", (cid,)).fetchone()
+    assert original["winner_instance_id"] == a  # winner untouched
+    assert _last_decision(conn)["rule"] == "review.cluster.split"
+
+
+def test_cluster_split_down_to_singletons(conn: sqlite3.Connection) -> None:
+    a, b = _instance(conn, "a.jpg"), _instance(conn, "b.jpg")
+    cid = _cluster(conn, a, b)
+    cluster_split(conn, cid, a)  # split the winner out
+    original = conn.execute("SELECT * FROM cluster WHERE id = ?", (cid,)).fetchone()
+    assert (original["status"], original["winner_instance_id"]) == ("reviewed", b)
+    roles = [
+        r["role"]
+        for r in conn.execute(
+            "SELECT role FROM cluster_member WHERE cluster_id = ?", (cid,)
+        )
+    ]
+    assert roles == ["winner"]
+    with pytest.raises(ReviewError, match="not in cluster"):
+        cluster_split(conn, cid, a)

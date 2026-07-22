@@ -252,6 +252,66 @@ def cluster_swap_winner(
         )
 
 
+def cluster_split(
+    conn: sqlite3.Connection, cluster_id: int, instance_id: int
+) -> int:
+    """Split one member out into its own *reviewed* singleton cluster.
+
+    The reviewed singleton locks the instance against re-clustering on later
+    dedup runs, so the user's split decision persists (INV-6). If the source
+    cluster is left with a single member, it too becomes a reviewed singleton.
+    Returns the new cluster's id.
+
+    Usage:
+        >>> cluster_split(conn, 3, 42)  # doctest: +SKIP
+        7
+    """
+    cluster = _cluster_row(conn, cluster_id)
+    member = conn.execute(
+        "SELECT role FROM cluster_member WHERE cluster_id = ? AND instance_id = ?",
+        (cluster_id, instance_id),
+    ).fetchone()
+    if member is None:
+        raise ReviewError(f"instance {instance_id} is not in cluster {cluster_id}")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO cluster (kind, status, winner_instance_id)"
+            " VALUES (?, 'reviewed', ?)",
+            (cluster["kind"], instance_id),
+        )
+        new_cluster_id = cur.lastrowid
+        assert new_cluster_id is not None
+        conn.execute(
+            "UPDATE cluster_member SET cluster_id = ?, role = 'winner'"
+            " WHERE cluster_id = ? AND instance_id = ?",
+            (new_cluster_id, cluster_id, instance_id),
+        )
+        remaining = conn.execute(
+            "SELECT instance_id FROM cluster_member WHERE cluster_id = ?",
+            (cluster_id,),
+        ).fetchall()
+        if cluster["winner_instance_id"] == instance_id and remaining:
+            conn.execute(
+                "UPDATE cluster SET winner_instance_id = ? WHERE id = ?",
+                (remaining[0]["instance_id"], cluster_id),
+            )
+        if len(remaining) == 1:
+            conn.execute(
+                "UPDATE cluster SET status = 'reviewed', winner_instance_id = ?"
+                " WHERE id = ?",
+                (remaining[0]["instance_id"], cluster_id),
+            )
+            conn.execute(
+                "UPDATE cluster_member SET role = 'winner' WHERE cluster_id = ?",
+                (cluster_id,),
+            )
+        _decision(
+            conn, f"cluster:{cluster_id}", "review.cluster.split",
+            {"instance": instance_id, "new_cluster": new_cluster_id},
+        )
+    return new_cluster_id
+
+
 def cluster_not_duplicate(conn: sqlite3.Connection, cluster_id: int) -> None:
     """Mark a cluster as not-a-duplicate: no winner, every member stands alone.
 

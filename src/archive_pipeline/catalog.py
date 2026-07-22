@@ -176,12 +176,23 @@ SCHEMA_V5 = """
 ALTER TABLE date_resolution ADD COLUMN sequence_hint INTEGER;
 """
 
+SCHEMA_V6 = """
+-- Stage 5: field-level metadata merge planned per cluster, applied by
+-- materialize onto the winner.
+CREATE TABLE cluster_merge (
+  cluster_id INTEGER PRIMARY KEY REFERENCES cluster(id),
+  merged_json TEXT NOT NULL,        -- date/gps/descriptions/titles/keywords + provenance
+  needs_review INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
     Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
     Migration(3, "takeout normalization tables (Stage 2)", SCHEMA_V3),
     Migration(4, "local provenance classification (Stage 2b)", SCHEMA_V4),
     Migration(5, "date_resolution.sequence_hint for review (Stage 4)", SCHEMA_V5),
+    Migration(6, "cluster_merge for dedup metadata merging (Stage 5)", SCHEMA_V6),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

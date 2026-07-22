@@ -290,6 +290,10 @@ def create_app(wt: WorkingTree) -> FastAPI:
                 if winner is None:
                     raise actions.ReviewError("select a member to make the winner")
                 actions.cluster_swap_winner(conn, cluster_id, winner)
+            elif action == "split":
+                if winner is None:
+                    raise actions.ReviewError("select a member to split out")
+                actions.cluster_split(conn, cluster_id, winner)
             elif action == "not_duplicate":
                 actions.cluster_not_duplicate(conn, cluster_id)
             else:

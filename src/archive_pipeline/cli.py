@@ -23,6 +23,7 @@ from archive_pipeline import __version__
 from archive_pipeline.catalog import open_catalog, schema_version
 from archive_pipeline.config import Config, ConfigError, load_config
 from archive_pipeline.dates import AUDIT_REPORT, DateResolveError, resolve_dates
+from archive_pipeline.dedup import CLUSTER_AUDIT_REPORT, DedupError, run_dedup
 from archive_pipeline.fixtures.generator import generate_corpus
 from archive_pipeline.ingest import IngestError, ingest_source
 from archive_pipeline.logs import configure_logging
@@ -345,9 +346,41 @@ def review_serve(
 
 
 @app.command()
-def dedup(ctx: typer.Context) -> None:
-    """Cluster duplicates and pick winners with guardrails (M6)."""
-    _not_implemented("dedup", "M6")
+def dedup(
+    ctx: typer.Context,
+    sample: Annotated[
+        int, typer.Option("--sample", help="Cluster audit-sample size exported.")
+    ] = 200,
+) -> None:
+    """Cluster duplicates, score winners, plan metadata merges (Stage 5)."""
+    wt = _working_tree(ctx)
+    cfg = _load_config_or_exit(wt)
+    log = configure_logging(wt.logs_dir, stage="dedup")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "dedup", {"sample": sample}):
+            summary = run_dedup(conn, cfg, wt, log, sample_size=sample)
+    except DedupError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+    kinds = ", ".join(f"{k}={n}" for k, n in sorted(summary.by_kind.items()))
+    typer.echo(
+        f"Clustered {summary.clusters_total} cluster(s) ({kinds or 'none'});"
+        f" {summary.singletons} singleton(s); {summary.locked_reviewed}"
+        " instance(s) locked by prior review."
+    )
+    guardrails = ", ".join(f"{g}={n}" for g, n in sorted(summary.guardrails.items()))
+    typer.echo(
+        f"Auto: {summary.auto}; awaiting review: {summary.pending_review}"
+        f" ({guardrails or 'no guardrails fired'})."
+    )
+    typer.echo(f"Audit sample ({summary.sample_size}): {wt.reports_dir / CLUSTER_AUDIT_REPORT}")
+    if summary.pending_review:
+        typer.echo("Review pending clusters with `archive review serve`.")
+    if not summary.changed:
+        typer.echo("Catalog already up to date (no changes written).")
 
 
 @app.command()
