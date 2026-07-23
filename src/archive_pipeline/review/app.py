@@ -262,6 +262,19 @@ def create_app(wt: WorkingTree) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         return RedirectResponse("/dates", status_code=303)
 
+    @app.post("/dates/batch-bucket")
+    def dates_batch_bucket(
+        source: str = Form(...),
+        dir_path: str = Form(""),
+        bucket: str = Form(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Response:
+        try:
+            actions.batch_bucket(conn, source, dir_path, bucket)
+        except actions.ReviewError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return RedirectResponse("/dates", status_code=303)
+
     @app.get("/clusters", response_class=HTMLResponse)
     def clusters_list(
         request: Request, conn: sqlite3.Connection = Depends(get_conn)

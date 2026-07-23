@@ -186,6 +186,13 @@ CREATE TABLE cluster_merge (
 );
 """
 
+SCHEMA_V7 = """
+-- Review UI: an explicit archive bucket for photos the user files coarsely
+-- (e.g. 'pre-2000' for old, undateable images), distinct from unresolved
+-- 'undated'. NULL for normal dated/undated resolutions.
+ALTER TABLE date_resolution ADD COLUMN bucket TEXT;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
     Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
@@ -193,6 +200,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(4, "local provenance classification (Stage 2b)", SCHEMA_V4),
     Migration(5, "date_resolution.sequence_hint for review (Stage 4)", SCHEMA_V5),
     Migration(6, "cluster_merge for dedup metadata merging (Stage 5)", SCHEMA_V6),
+    Migration(7, "date_resolution.bucket for coarse archive buckets", SCHEMA_V7),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

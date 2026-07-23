@@ -11,6 +11,7 @@ from archive_pipeline.review.actions import (
     ReviewError,
     accept_candidate,
     batch_apply,
+    batch_bucket,
     batch_manual,
     cluster_accept,
     cluster_not_duplicate,
@@ -194,6 +195,22 @@ def test_batch_manual_validation(conn: sqlite3.Connection) -> None:
         batch_manual(conn, "LOCAL", "old", "June 1998")
     with pytest.raises(ReviewError, match="not a real date"):
         batch_manual(conn, "LOCAL", "old", "1998-13")
+
+
+def test_batch_bucket_pre_2000(conn: sqlite3.Connection) -> None:
+    a = _instance(conn, "old-scans/a.jpg")
+    b = _instance(conn, "old-scans/b.jpg")
+    for iid in (a, b):
+        _resolution(conn, iid)  # undated
+    assert batch_bucket(conn, "LOCAL", "old-scans", "pre-2000") == 2
+    row = _row(conn, a)
+    assert (row["status"], row["bucket"], row["resolved_date"]) == (
+        "reviewed", "pre-2000", None
+    )
+    assert row["resolved_source"] == "review"
+    assert _last_decision(conn)["rule"] == "review.date.bucket"
+    with pytest.raises(ReviewError, match="unknown bucket"):
+        batch_bucket(conn, "LOCAL", "old-scans", "medieval")
 
 
 def test_sequence_hint(conn: sqlite3.Connection) -> None:

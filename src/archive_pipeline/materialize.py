@@ -79,11 +79,14 @@ def dest_rel_path(
     undated_dir: str,
     rel_path: str,
     sha256: str,
+    bucket: str | None = None,
 ) -> str:
     """Archive-relative destination: ``YYYY/YYYY-MM/<stem>__<sha8><ext>``.
 
     Year-precision dates land in ``YYYY/`` directly; unknown dates in the
-    configured undated directory (spec Stage 6.2).
+    configured undated directory (spec Stage 6.2); a coarse ``bucket`` (e.g.
+    the user's ``pre-2000``) files into ``<bucket>/`` and takes precedence when
+    there is no resolved date.
 
     Usage:
         >>> dest_rel_path("1998-07-12T14:33:05", "second", "undated",
@@ -93,11 +96,13 @@ def dest_rel_path(
         '1998/b__ffffffff.png'
         >>> dest_rel_path(None, None, "undated", "a/b.png", "ff" * 32)
         'undated/b__ffffffff.png'
+        >>> dest_rel_path(None, None, "undated", "a/b.png", "ff" * 32, bucket="pre-2000")
+        'pre-2000/b__ffffffff.png'
     """
     stem, ext = posixpath.splitext(posixpath.basename(rel_path))
     name = f"{stem}__{sha256[:8]}{ext.lower()}"
     if not resolved_date:
-        return f"{undated_dir}/{name}"
+        return f"{bucket or undated_dir}/{name}"
     year = resolved_date[:4]
     if precision == "year":
         return f"{year}/{name}"
@@ -378,6 +383,7 @@ def build_plan(
         resolved_date = resolution["resolved_date"] if resolution else None
         resolved_precision = resolution["resolved_precision"] if resolution else None
         resolved_source = resolution["resolved_source"] if resolution else None
+        bucket = resolution["bucket"] if resolution else None
         merge = merges.get(cluster_id) if role == "winner" else None
         if merge and merge["date"]["date"]:
             resolved_date = merge["date"]["date"]
@@ -443,7 +449,7 @@ def build_plan(
 
         dest = dest_rel_path(
             resolved_date, resolved_precision, cfg.policy.undated_placement,
-            row["rel_path"], row["sha256"],
+            row["rel_path"], row["sha256"], bucket=bucket if not resolved_date else None,
         )
         item = PlanItem(
             **base, disposition="archive",

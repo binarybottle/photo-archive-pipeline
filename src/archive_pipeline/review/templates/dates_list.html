@@ -34,6 +34,14 @@
     </label>
     <button>Apply to all {{ group.entries | length }}</button>
   </form>
+  <form class="inline" method="post" action="/dates/batch-bucket">
+    <input type="hidden" name="source" value="{{ group.source }}">
+    <input type="hidden" name="dir_path" value="{{ group.dir }}">
+    <input type="hidden" name="bucket" value="pre-2000">
+    <button title="File these under archive/pre-2000/ (old, exact date unknown)">
+      Mark all pre-2000
+    </button>
+  </form>
   <div class="strip">
     {% for item in group.entries %}
     <a class="conflict-item" href="/dates/item/{{ item.id }}" title="{{ item.rel_path }}">

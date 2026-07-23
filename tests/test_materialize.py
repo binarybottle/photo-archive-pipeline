@@ -47,6 +47,39 @@ def test_quarantine_rel_path() -> None:
     assert quarantine_rel_path(sha, "a/b/photo.jpg") == f"ef/{sha}__photo.jpg"
 
 
+def test_dest_rel_path_bucket() -> None:
+    sha = "ab" * 32
+    assert dest_rel_path(None, None, "undated", "x/old.jpg", sha, bucket="pre-2000") == (
+        f"pre-2000/old__{sha[:8]}.jpg"
+    )
+    # A resolved date always wins over the coarse bucket.
+    assert dest_rel_path("1998-01-01", "year", "undated", "x/old.jpg", sha,
+                         bucket="pre-2000") == f"1998/old__{sha[:8]}.jpg"
+
+
+def test_build_plan_routes_bucket(tmp_path: Path) -> None:
+    from archive_pipeline.catalog import open_catalog
+    from archive_pipeline.config import Config
+    from archive_pipeline.materialize import build_plan
+    from archive_pipeline.workingtree import init_working_tree
+
+    wt, _ = init_working_tree(tmp_path / "wt")
+    conn = open_catalog(wt.catalog_path)
+    with conn:
+        conn.execute(
+            "INSERT INTO instance (id, source, rel_path, size_bytes, sha256, kind,"
+            " ingest_run_id) VALUES (1, 'LOCAL', 'old/x.jpg', 1, ?, 'image', 1)",
+            ("aa" * 32,),
+        )
+        conn.execute(
+            "INSERT INTO date_resolution (instance_id, status, resolved_source, bucket)"
+            " VALUES (1, 'reviewed', 'review', 'pre-2000')"
+        )
+    item = next(i for i in build_plan(conn, Config(), {}) if i.instance_id == 1)
+    assert item.disposition == "archive"
+    assert item.dest_rel is not None and item.dest_rel.startswith("pre-2000/")
+
+
 def test_exiftool_date_padding() -> None:
     assert exiftool_date("1998-07-12T14:33:05", "second") == "1998:07:12 14:33:05"
     assert exiftool_date("2015-04-18T09:30:00+00:00", "second") == "2015:04:18 09:30:00"

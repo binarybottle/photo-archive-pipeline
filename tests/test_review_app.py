@@ -118,6 +118,21 @@ def test_batch_trust_exif_resolves_scan_batch(
     assert statuses == ["reviewed", "reviewed", "reviewed"]
 
 
+def test_pre_2000_bucket_via_form(env: PipelineEnv, client: TestClient) -> None:
+    response = client.post(
+        "/dates/batch-bucket",
+        data={"source": "LOCAL", "dir_path": "scans", "bucket": "pre-2000"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    rows = env.conn.execute(
+        "SELECT d.bucket, d.status FROM date_resolution d JOIN instance i"
+        " ON i.id = d.instance_id WHERE i.rel_path LIKE 'scans/%'"
+    ).fetchall()
+    assert rows
+    assert all((r["bucket"], r["status"]) == ("pre-2000", "reviewed") for r in rows)
+
+
 def test_sequence_hint_via_form(env: PipelineEnv, client: TestClient) -> None:
     iid = _iid(env.conn, "scans/scan002.png")
     response = client.post(

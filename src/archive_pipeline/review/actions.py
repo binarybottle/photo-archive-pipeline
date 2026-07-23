@@ -218,6 +218,47 @@ def batch_manual(
     return len(rows)
 
 
+PRE_2000_BUCKET = "pre-2000"
+
+
+def batch_bucket(
+    conn: sqlite3.Connection, source: str, dir_path: str, bucket: str
+) -> int:
+    """File every conflict item in one folder into a coarse archive bucket.
+
+    Used for photos the user knows only loosely — e.g. ``pre-2000`` for old,
+    undateable images. The bucket becomes an ``archive/<bucket>/`` folder at
+    materialize; the row is marked reviewed so re-resolution leaves it alone.
+
+    Usage:
+        >>> batch_bucket(conn, "LOCAL", "old-scans", "pre-2000")  # doctest: +SKIP
+        42
+    """
+    if bucket != PRE_2000_BUCKET:
+        raise ReviewError(f"unknown bucket: {bucket}")
+    like = f"{dir_path}/%" if dir_path else "%"
+    rows = conn.execute(
+        "SELECT d.instance_id FROM date_resolution d JOIN instance i"
+        " ON i.id = d.instance_id WHERE d.status = 'conflict' AND i.source = ?"
+        " AND i.rel_path LIKE ? AND i.rel_path NOT LIKE ?",
+        (source, like, f"{like}/%"),
+    ).fetchall()
+    with conn:
+        for row in rows:
+            conn.execute(
+                "UPDATE date_resolution SET resolved_date = NULL,"
+                " resolved_precision = NULL, resolved_source = 'review',"
+                " bucket = ?, status = 'reviewed', confidence = 1.0"
+                " WHERE instance_id = ?",
+                (bucket, row["instance_id"]),
+            )
+            _decision(
+                conn, f"instance:{row['instance_id']}", "review.date.bucket",
+                {"bucket": bucket, "dir": dir_path},
+            )
+    return len(rows)
+
+
 def set_sequence_hint(
     conn: sqlite3.Connection, instance_id: int, hint: int | None
 ) -> None:
