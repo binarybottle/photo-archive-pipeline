@@ -133,18 +133,19 @@ def accept_candidate(conn: sqlite3.Connection, instance_id: int, candidate: str)
 def batch_apply(
     conn: sqlite3.Connection, source: str, dir_path: str, action: str
 ) -> int:
-    """Apply a candidate to every *conflict* item in one folder; return count.
+    """Apply one candidate to every *conflict* item in one folder; return count.
 
-    ``action`` is ``folder`` ("apply folder date to all items in this folder")
-    or ``exif`` ("trust EXIF for this whole camera-roll sequence").
+    ``action`` is ``folder`` ("apply the folder date"), ``exif`` ("trust EXIF
+    for this whole camera roll"), or ``filename`` ("use the date parsed from
+    each filename"). Items lacking that candidate are skipped.
 
     Usage:
         >>> batch_apply(conn, "LOCAL", "scans", "exif")  # doctest: +SKIP
         3
     """
-    if action not in ("folder", "exif"):
+    if action not in ("folder", "exif", "filename"):
         raise ReviewError(f"unknown batch action: {action}")
-    column, source_label = _CANDIDATES[action if action == "folder" else "exif"]
+    column, source_label = _CANDIDATES[action]
     like = f"{dir_path}/%" if dir_path else "%"
     rows = conn.execute(
         f"SELECT d.instance_id, d.{column} AS cand, d.folder_precision"
@@ -157,17 +158,64 @@ def batch_apply(
     for row in rows:
         if not row["cand"]:
             continue
-        precision = (
-            (row["folder_precision"] or "day")
-            if action == "folder"
-            else ("second" if "T" in row["cand"] else "day")
-        )
+        if action == "folder":
+            precision = row["folder_precision"] or "day"
+        else:
+            precision = "second" if "T" in row["cand"] else "day"
         _apply_resolution(
             conn, row["instance_id"], row["cand"], precision, source_label,
             f"review.date.batch_{action}", {"dir": dir_path, "source": source},
         )
         applied += 1
     return applied
+
+
+_PARTIAL_DATE = (
+    (re.compile(r"^\d{4}-\d{2}-\d{2}$"), "day", "{0}"),
+    (re.compile(r"^\d{4}-\d{2}$"), "month", "{0}-01"),
+    (re.compile(r"^\d{4}$"), "year", "{0}-01-01"),
+)
+
+
+def batch_manual(
+    conn: sqlite3.Connection, source: str, dir_path: str, entered: str
+) -> int:
+    """Assign a manually typed date to every conflict item in one folder.
+
+    Accepts a partial date and infers its precision: ``YYYY`` (year),
+    ``YYYY-MM`` (month), or ``YYYY-MM-DD`` (day). Returns the count updated.
+
+    Usage:
+        >>> batch_manual(conn, "LOCAL", "Ellora/2004", "2004")  # doctest: +SKIP
+        116
+    """
+    entered = entered.strip()
+    date = precision = None
+    for pattern, prec, template in _PARTIAL_DATE:
+        if pattern.match(entered):
+            date, precision = template.format(entered), prec
+            break
+    if date is None or precision is None:
+        raise ReviewError(
+            f"enter a year, year-month, or year-month-day (got {entered!r})"
+        )
+    try:
+        datetime.fromisoformat(date)
+    except ValueError as exc:
+        raise ReviewError(f"not a real date: {entered}") from exc
+    like = f"{dir_path}/%" if dir_path else "%"
+    rows = conn.execute(
+        "SELECT d.instance_id FROM date_resolution d JOIN instance i"
+        " ON i.id = d.instance_id WHERE d.status = 'conflict' AND i.source = ?"
+        " AND i.rel_path LIKE ? AND i.rel_path NOT LIKE ?",
+        (source, like, f"{like}/%"),
+    ).fetchall()
+    for row in rows:
+        _apply_resolution(
+            conn, row["instance_id"], date, precision, "review",
+            "review.date.batch_manual", {"dir": dir_path, "entered": entered},
+        )
+    return len(rows)
 
 
 def set_sequence_hint(

@@ -115,18 +115,20 @@ def create_app(wt: WorkingTree) -> FastAPI:
             precision = next(
                 (e["folder_precision"] for e in entries if e["cand_folder"]), None
             )
-            exifs = sorted({e["cand_exif"][:10] for e in entries if e["cand_exif"]})
-            if not exifs:
-                exif_summary = None
-            elif len(exifs) == 1:
-                exif_summary = exifs[0]
-            else:
-                exif_summary = f"{exifs[0]} … {exifs[-1]} ({len(exifs)} distinct)"
+            def summarize(column: str, rows: list[sqlite3.Row] = entries) -> str | None:
+                vals = sorted({str(r[column])[:10] for r in rows if r[column]})
+                if not vals:
+                    return None
+                if len(vals) == 1:
+                    return vals[0]
+                return f"{vals[0]} … {vals[-1]} ({len(vals)} distinct)"
+
             group_list.append(
                 {
                     "source": source, "dir": dir_path, "entries": entries,
                     "folder_date": folder, "folder_precision": precision,
-                    "exif_summary": exif_summary,
+                    "exif_summary": summarize("cand_exif"),
+                    "filename_summary": summarize("cand_filename"),
                 }
             )
         return templates.TemplateResponse(
@@ -243,6 +245,19 @@ def create_app(wt: WorkingTree) -> FastAPI:
     ) -> Response:
         try:
             actions.batch_apply(conn, source, dir_path, action)
+        except actions.ReviewError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return RedirectResponse("/dates", status_code=303)
+
+    @app.post("/dates/batch-manual")
+    def dates_batch_manual(
+        source: str = Form(...),
+        dir_path: str = Form(""),
+        date: str = Form(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Response:
+        try:
+            actions.batch_manual(conn, source, dir_path, date)
         except actions.ReviewError as exc:
             raise HTTPException(400, str(exc)) from exc
         return RedirectResponse("/dates", status_code=303)

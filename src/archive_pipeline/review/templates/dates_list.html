@@ -8,19 +8,31 @@
   <h2>{{ group.source }} / {{ group.dir or "(root)" }}
       <span class="pill">{{ group.entries | length }} item(s)</span></h2>
   <p class="muted">
-    Folder date: <strong>{{ group.folder_date or "—" }}</strong>{% if group.folder_precision %}
+    Folder: <strong>{{ group.folder_date or "—" }}</strong>{% if group.folder_precision %}
       ({{ group.folder_precision }}){% endif %}
     &nbsp;·&nbsp; EXIF: <strong>{{ group.exif_summary or "none" }}</strong>
+    &nbsp;·&nbsp; Filename: <strong>{{ group.filename_summary or "none" }}</strong>
   </p>
   <form class="inline" method="post" action="/dates/batch">
     <input type="hidden" name="source" value="{{ group.source }}">
     <input type="hidden" name="dir_path" value="{{ group.dir }}">
     <button name="action" value="folder"{% if not group.folder_date %} disabled{% endif %}>
-      Apply folder date{% if group.folder_date %} → {{ group.folder_date }}{% endif %}
+      Use folder date{% if group.folder_date %} → {{ group.folder_date }}{% endif %}
     </button>
     <button name="action" value="exif"{% if not group.exif_summary %} disabled{% endif %}>
-      Trust EXIF for all
+      Use EXIF
     </button>
+    <button name="action" value="filename"{% if not group.filename_summary %} disabled{% endif %}>
+      Use filename date{% if group.filename_summary %} → {{ group.filename_summary }}{% endif %}
+    </button>
+  </form>
+  <form class="inline" method="post" action="/dates/batch-manual" style="margin-top:.4rem">
+    <input type="hidden" name="source" value="{{ group.source }}">
+    <input type="hidden" name="dir_path" value="{{ group.dir }}">
+    <label class="muted">Set all to:
+      <input name="date" size="12" placeholder="YYYY / YYYY-MM / YYYY-MM-DD" required>
+    </label>
+    <button>Apply to all {{ group.entries | length }}</button>
   </form>
   <div class="strip">
     {% for item in group.entries %}

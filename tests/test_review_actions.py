@@ -11,6 +11,7 @@ from archive_pipeline.review.actions import (
     ReviewError,
     accept_candidate,
     batch_apply,
+    batch_manual,
     cluster_accept,
     cluster_not_duplicate,
     cluster_split,
@@ -145,7 +146,54 @@ def test_batch_apply_exif(conn: sqlite3.Connection) -> None:
     row = _row(conn, iid)
     assert (row["resolved_source"], row["resolved_precision"]) == ("exif", "day")
     with pytest.raises(ReviewError, match="unknown batch action"):
-        batch_apply(conn, "LOCAL", "roll", "filename")
+        batch_apply(conn, "LOCAL", "roll", "takeout")
+
+
+def test_batch_apply_filename(conn: sqlite3.Connection) -> None:
+    a = _instance(conn, "Ellora/2004/a.jpg")
+    b = _instance(conn, "Ellora/2004/b.jpg")
+    for iid in (a, b):
+        _resolution(
+            conn, iid, cand_exif="2002-09-01T10:00:00", cand_folder="2004-01-01",
+            folder_precision="year", cand_filename="2004-06-23",
+        )
+    assert batch_apply(conn, "LOCAL", "Ellora/2004", "filename") == 2
+    row = _row(conn, a)
+    assert (row["resolved_date"], row["resolved_source"], row["resolved_precision"]) == (
+        "2004-06-23", "filename", "day"
+    )
+    assert row["status"] == "reviewed"
+
+
+def test_batch_manual_precisions(conn: sqlite3.Connection) -> None:
+    y = _instance(conn, "oldy/a.jpg")
+    _resolution(conn, y)
+    assert batch_manual(conn, "LOCAL", "oldy", "1998") == 1
+    assert (_row(conn, y)["resolved_date"], _row(conn, y)["resolved_precision"],
+            _row(conn, y)["resolved_source"]) == ("1998-01-01", "year", "review")
+
+    m = _instance(conn, "oldm/a.jpg")
+    _resolution(conn, m)
+    assert batch_manual(conn, "LOCAL", "oldm", "1998-07") == 1
+    assert (_row(conn, m)["resolved_date"], _row(conn, m)["resolved_precision"]) == (
+        "1998-07-01", "month"
+    )
+
+    d = _instance(conn, "oldd/a.jpg")
+    _resolution(conn, d)
+    assert batch_manual(conn, "LOCAL", "oldd", "1998-07-15") == 1
+    assert (_row(conn, d)["resolved_date"], _row(conn, d)["resolved_precision"]) == (
+        "1998-07-15", "day"
+    )
+
+
+def test_batch_manual_validation(conn: sqlite3.Connection) -> None:
+    iid = _instance(conn, "old/x.jpg")
+    _resolution(conn, iid)
+    with pytest.raises(ReviewError, match="year, year-month"):
+        batch_manual(conn, "LOCAL", "old", "June 1998")
+    with pytest.raises(ReviewError, match="not a real date"):
+        batch_manual(conn, "LOCAL", "old", "1998-13")
 
 
 def test_sequence_hint(conn: sqlite3.Connection) -> None:
