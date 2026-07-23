@@ -197,6 +197,17 @@ def test_merge_dates_review_beats_folder_but_day_conflict_flags() -> None:
     assert needs_review  # July 12 EXIF vs July 14 review disagree at day level
 
 
+def test_merge_dates_same_day_is_not_a_disagreement() -> None:
+    # A Live Photo's image and video are the same moment, seconds apart.
+    image = mk(1, resolved_source="exif", resolved_date="2020-08-02T10:00:00",
+               resolved_precision="second")
+    video = mk(2, resolved_source="exif", resolved_date="2020-08-02T10:00:02",
+               resolved_precision="second")
+    merged, needs_review = merge_dates([image, video])
+    assert not needs_review
+    assert merged["date"][:10] == "2020-08-02"
+
+
 def test_merge_dates_disagreement_flags_review() -> None:
     a = mk(1, resolved_source="exif", resolved_date="1998-07-12T14:33:05")
     b = mk(2, resolved_source="takeout_json", resolved_date="2003-01-01T00:00:00")

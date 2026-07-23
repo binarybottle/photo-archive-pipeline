@@ -409,10 +409,15 @@ def merge_dates(
     assert chosen.resolved_date is not None
 
     def _coarse_mismatch(m: Media) -> bool:
+        # Compare at the coarser of the two precisions, but never finer than a
+        # day: two copies from the same day (a Live Photo's image and video
+        # seconds apart, or DateTimeOriginal vs CreateDate) are the same moment,
+        # not a date disagreement. Only a different day/month/year is one.
         assert m.resolved_date is not None and chosen.resolved_date is not None
         chars = min(
-            _PRECISION_CHARS.get(m.resolved_precision or "second", 19),
-            _PRECISION_CHARS.get(chosen.resolved_precision or "second", 19),
+            _PRECISION_CHARS["day"],
+            _PRECISION_CHARS.get(m.resolved_precision or "day", 10),
+            _PRECISION_CHARS.get(chosen.resolved_precision or "day", 10),
         )
         return m.resolved_date[:chars] != chosen.resolved_date[:chars]
 
