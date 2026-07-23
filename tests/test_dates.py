@@ -38,6 +38,19 @@ def test_folder_candidate_rejects_invalid_dates() -> None:
     assert folder_candidate("2010-02-31/a.jpg", DEFAULT_FOLDER_DATE_PATTERNS) is None
 
 
+def test_folder_candidate_year_at_end_and_uncertain() -> None:
+    p = DEFAULT_FOLDER_DATE_PATTERNS
+    assert folder_candidate("Europe_2010/a.jpg", p) == ("2010-01-01", "year")
+    assert folder_candidate("Metamorphosis_exhibit_2005/a.jpg", p) == ("2005-01-01", "year")
+    assert folder_candidate("2005?/a.jpg", p) == ("2005-01-01", "year")
+    # Ranges stay ambiguous — never auto-assigned to a single year.
+    assert folder_candidate("2004-2009/a.jpg", p) is None
+    assert folder_candidate("2000-2003/a.jpg", p) is None
+    # Non-date topical folders remain unmatched.
+    assert folder_candidate("videocalls/a.jpg", p) is None
+    assert folder_candidate("Japan/a.jpg", p) is None
+
+
 def test_filename_candidate_patterns() -> None:
     p = DEFAULT_FILENAME_DATE_PATTERNS
     assert filename_candidate("x/IMG_20150418_093000.jpg", p) == (

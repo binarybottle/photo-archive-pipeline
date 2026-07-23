@@ -32,6 +32,12 @@ DEFAULT_FOLDER_DATE_PATTERNS: tuple[str, ...] = (
     r"^(?P<year>(19|20)\d{2})[_ -](?P<event>\D.*)$",
     r"^(?P<year>(19|20)\d{2})(?P<month>0[1-9]|1[0-2])(?P<day>0[1-9]|[12]\d|3[01])[_ -].*$",
     r"^Photos from (?P<year>(19|20)\d{2})$",
+    # Year at the END of a topical folder name (year precision). The text part
+    # must end in a non-digit so ranges like "2004-2009" are NOT matched:
+    # "Europe_2010", "Metamorphosis_exhibit_2005".
+    r"^(?P<event>.*[^\d_ -])[_ -](?P<year>(19|20)\d{2})$",
+    # Uncertain year marked with a trailing ? or ~ (year precision): "2005?".
+    r"^(?P<year>(19|20)\d{2})[?~]$",
 )
 
 #: Filename date patterns (spec Stage 3): IMG_/VID_/PXL_ camera names, bare
