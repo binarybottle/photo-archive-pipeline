@@ -391,6 +391,17 @@ def merge_dates(
             True,
         )
 
+    def _reliable(m: Media) -> bool:
+        # Two date sources are unreliable for detecting a genuine conflict: a
+        # video's timestamp is often a re-encode time, not the capture moment,
+        # and a takeout-derived folder date (rule R4b) is Google's *upload* year,
+        # not when the photo was taken. Either contradicting a real capture date
+        # is expected, not a decision for the user — so they never win the merge
+        # and never raise a disagreement unless nothing better exists.
+        if m.kind == "video":
+            return False
+        return not (m.resolved_source == "folder" and m.effective_trust != "curated")
+
     def _priority(m: Media) -> float:
         # A takeout-derived folder date (rule R4b) reflects Google's dating,
         # not the user's research (Stage 2b): rank it below takeout_json.
@@ -398,8 +409,9 @@ def merge_dates(
             return 1.5
         return _DATE_SOURCE_PRIORITY.get(m.resolved_source or "", 0)
 
+    pool = [m for m in dated if _reliable(m)] or dated
     chosen = max(
-        dated,
+        pool,
         key=lambda m: (
             _priority(m),
             _PRECISION_CHARS.get(m.resolved_precision or "year", 4),
@@ -421,7 +433,7 @@ def merge_dates(
         )
         return m.resolved_date[:chars] != chosen.resolved_date[:chars]
 
-    disagreement = any(_coarse_mismatch(m) for m in dated)
+    disagreement = any(_coarse_mismatch(m) for m in pool)
     flags = ["date_disagreement"] if disagreement else []
     if len(dated) < len(members):
         flags.append("date_unresolved_members")

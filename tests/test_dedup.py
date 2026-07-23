@@ -209,12 +209,38 @@ def test_merge_dates_same_day_is_not_a_disagreement() -> None:
 
 
 def test_merge_dates_disagreement_flags_review() -> None:
+    # Two reliable sources (EXIF vs Google photoTakenTime) that disagree still
+    # flag for review.
     a = mk(1, resolved_source="exif", resolved_date="1998-07-12T14:33:05")
     b = mk(2, resolved_source="takeout_json", resolved_date="2003-01-01T00:00:00")
     merged, needs_review = merge_dates([a, b])
     assert merged["source"] == "exif"
     assert needs_review
     assert "date_disagreement" in merged["flags"]
+
+
+def test_merge_dates_video_date_is_not_a_disagreement() -> None:
+    # A Live Photo: the image carries the real date, the video a re-encode date.
+    image = mk(1, kind="image", resolved_source="exif",
+               resolved_date="2021-10-02T09:00:00")
+    video = mk(2, kind="video", resolved_source="exif",
+               resolved_date="2023-06-25T12:00:00")
+    merged, needs_review = merge_dates([image, video])
+    assert not needs_review
+    assert merged["date"][:10] == "2021-10-02"
+
+
+def test_merge_dates_takeout_upload_year_folder_is_not_a_disagreement() -> None:
+    # Same photo in a curated 2007 folder and Google's "Photos from 2023"
+    # upload-year folder: the curated date wins, and the upload year is not a
+    # conflict worth review.
+    curated = mk(1, resolved_source="folder", resolved_date="2007-01-01",
+                 resolved_precision="year", effective_trust="curated")
+    upload = mk(2, resolved_source="folder", resolved_date="2023-01-01",
+                resolved_precision="year", effective_trust="takeout")
+    merged, needs_review = merge_dates([curated, upload])
+    assert not needs_review
+    assert merged["date"] == "2007-01-01"
 
 
 def test_merge_dates_takeout_derived_folder_ranks_below_sidecar() -> None:
