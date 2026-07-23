@@ -224,22 +224,27 @@ def _folder_or_filename(
     folder_date: str,
     folder_rule: str,
     refine_rule: str,
-    conflict_rule: str,
+    conflict_rule: str | None,
 ) -> Resolution:
     """Resolve a folder-based date, letting a filename date refine or contest it.
 
     With no filename date the folder date stands at folder precision. With one,
     a filename date inside the folder's granularity refines the result to the
     filename's finer precision (a ``2003`` folder with ``20030916`` in the name
-    becomes day-precise); a filename date outside that granularity contradicts
-    the folder placement and is queued for review.
+    becomes day-precise).
+
+    ``conflict_rule`` controls a filename date *outside* the folder's
+    granularity. A curated folder passes a rule so the disagreement is queued
+    for review (the user's placement is deliberate). A Takeout "Photos from
+    YYYY" folder passes ``None``: that is only an *upload*-year bucket, too weak
+    to contest a capture date, so the filename simply wins.
     """
     if not c.filename:
         return Resolution(
             folder_date, c.folder_precision, "folder", "auto",
             _CONFIDENCE[folder_rule], folder_rule,
         )
-    if _within(c.filename, folder_date, c.folder_precision):
+    if conflict_rule is None or _within(c.filename, folder_date, c.folder_precision):
         return Resolution(
             c.filename, c.filename_precision, "filename", "auto",
             _CONFIDENCE[refine_rule], refine_rule,
@@ -252,8 +257,9 @@ def resolve(c: Candidates, flags: list[str]) -> Resolution:
 
     Rules: R1 (EXIF within curated folder), R6 (EXIF conflicts curated folder),
     R2 (trusted EXIF), R3/R3f/R3c (curated folder, optionally filename-refined
-    or -contested), R4 (Takeout sidecar), R4b/R4bf/R4bc (Takeout folder,
-    optionally filename-refined or -contested), R5 (filename only), R7 (none).
+    or -contested), R4 (Takeout sidecar), R4b/R4bf (Takeout folder, optionally
+    filename-refined — a filename date always wins over Google's weak
+    upload-year bucket), R5 (filename only), R7 (none).
 
     Usage:
         >>> resolve(Candidates(exif="1998-07-12T14:33:05", folder="1998-01-01",
@@ -278,7 +284,7 @@ def resolve(c: Candidates, flags: list[str]) -> Resolution:
     if c.takeout and not c.takeout_is_upload_artifact:
         return Resolution(c.takeout, "second", "takeout_json", "auto", _CONFIDENCE["R4"], "R4")
     if c.folder:
-        return _folder_or_filename(c, c.folder, "R4b", "R4bf", "R4bc")
+        return _folder_or_filename(c, c.folder, "R4b", "R4bf", None)
     if c.filename:
         return Resolution(
             c.filename, c.filename_precision, "filename", "auto", _CONFIDENCE["R5"], "R5"

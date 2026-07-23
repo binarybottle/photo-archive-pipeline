@@ -253,13 +253,17 @@ def test_r4bf_filename_refines_takeout_year_folder() -> None:
     )
 
 
-def test_r4bc_filename_contradicts_takeout_year_folder() -> None:
+def test_r4bf_filename_trusted_over_takeout_year_bucket() -> None:
+    # "Photos from YYYY" is Google's upload-year bucket, too weak to contest a
+    # capture date: the filename wins even when the years disagree (no review).
     r = resolve(
         Candidates(folder="2019-01-01", folder_precision="year", folder_trusted=False,
                    filename="2015-08-12", filename_precision="day"),
         [],
     )
-    assert (r.rule, r.status) == ("R4bc", "conflict")
+    assert (r.rule, r.source, r.date, r.status) == (
+        "R4bf", "filename", "2015-08-12", "auto"
+    )
 
 
 def test_folder_stands_when_no_filename_date() -> None:
