@@ -14,6 +14,8 @@ from archive_pipeline.review.actions import (
     batch_bucket,
     batch_manual,
     batch_skip,
+    bulk_accept_pending,
+    bulk_prefer_curated,
     cluster_accept,
     cluster_not_duplicate,
     cluster_split,
@@ -356,3 +358,63 @@ def test_cluster_split_down_to_singletons(conn: sqlite3.Connection) -> None:
     assert roles == ["winner"]
     with pytest.raises(ReviewError, match="not in cluster"):
         cluster_split(conn, cid, a)
+
+
+def _img(conn: sqlite3.Connection, rel: str, trust: str, w: int, h: int) -> int:
+    cur = conn.execute(
+        "INSERT INTO instance (source, rel_path, size_bytes, sha256, kind,"
+        " ingest_run_id, effective_trust, width, height)"
+        " VALUES ('LOCAL', ?, 1, ?, 'image', 1, ?, ?, ?)",
+        (rel, f"h-{rel}", trust, w, h),
+    )
+    assert cur.lastrowid is not None
+    return cur.lastrowid
+
+
+def test_bulk_prefer_curated_swaps_to_original(conn: sqlite3.Connection) -> None:
+    takeout = _img(conn, "google/x.jpg", "takeout", 4000, 3000)
+    curated = _img(conn, "mine/x.jpg", "curated", 4000, 3000)
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO cluster (kind, status, winner_instance_id)"
+            " VALUES ('exact', 'pending', ?)",
+            (takeout,),
+        )
+        cid = cur.lastrowid
+        conn.execute(
+            "INSERT INTO cluster_member (cluster_id, instance_id, role)"
+            " VALUES (?, ?, 'winner'), (?, ?, 'loser')",
+            (cid, takeout, cid, curated),
+        )
+    assert bulk_prefer_curated(conn) == 1
+    row = conn.execute("SELECT * FROM cluster WHERE id = ?", (cid,)).fetchone()
+    assert (row["status"], row["winner_instance_id"]) == ("reviewed", curated)
+    roles = {
+        r["instance_id"]: r["role"]
+        for r in conn.execute(
+            "SELECT instance_id, role FROM cluster_member WHERE cluster_id = ?", (cid,)
+        )
+    }
+    assert roles == {takeout: "loser", curated: "winner"}
+
+
+def test_bulk_accept_pending_excludes_videos(conn: sqlite3.Connection) -> None:
+    a, b = _instance(conn, "a.jpg"), _instance(conn, "b.jpg")
+    with conn:
+        img = conn.execute(
+            "INSERT INTO cluster (kind, status, winner_instance_id)"
+            " VALUES ('near_image', 'pending', ?)",
+            (a,),
+        ).lastrowid
+        vid = conn.execute(
+            "INSERT INTO cluster (kind, status, winner_instance_id)"
+            " VALUES ('near_video', 'pending', ?)",
+            (b,),
+        ).lastrowid
+    assert bulk_accept_pending(conn) == 1  # image cluster only
+    status = {
+        r["id"]: r["status"]
+        for r in conn.execute("SELECT id, status FROM cluster")
+    }
+    assert status[img] == "reviewed"
+    assert status[vid] == "pending"  # videos are never bulk-collapsed

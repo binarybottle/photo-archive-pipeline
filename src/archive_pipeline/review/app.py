@@ -395,6 +395,19 @@ def create_app(wt: WorkingTree) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         return RedirectResponse("/clusters", status_code=303)
 
+    @app.post("/clusters/bulk")
+    def clusters_bulk(
+        action: str = Form(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Response:
+        if action == "prefer_curated":
+            actions.bulk_prefer_curated(conn)
+        elif action == "accept_all":
+            actions.bulk_accept_pending(conn)
+        else:
+            raise HTTPException(400, f"unknown bulk action: {action}")
+        return RedirectResponse("/clusters", status_code=303)
+
     @app.get("/thumb/{instance_id}")
     def thumb(
         instance_id: int, conn: sqlite3.Connection = Depends(get_conn)

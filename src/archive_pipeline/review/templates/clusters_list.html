@@ -5,6 +5,25 @@
 {% if not clusters %}
 <p>No clusters awaiting review{% if none_yet %} — run <code>archive dedup</code> first{% endif %}.</p>
 {% endif %}
+{% if clusters %}
+<div class="card">
+  <p class="muted">Most of these are near-identical copies where the winner choice
+    doesn't matter — the best copy is kept and the rest stay in quarantine
+    (recoverable). Clear them in bulk:</p>
+  <form class="inline" method="post" action="/clusters/bulk">
+    <button name="action" value="prefer_curated"
+            title="Where a Google copy currently wins over your equal-resolution original, keep your original instead">
+      1 · Prefer my curated copies over Takeout
+    </button>
+    <button name="action" value="accept_all"
+            title="Accept the auto-chosen best copy for all remaining clusters (videos excluded — review those below)">
+      2 · Accept the rest (keep the best copy)
+    </button>
+  </form>
+  <p class="muted">Videos are never bulk-collapsed — review any video clusters
+    individually below.</p>
+</div>
+{% endif %}
 <table>
   {% for c in clusters %}
   <tr>

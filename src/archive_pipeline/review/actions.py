@@ -468,3 +468,86 @@ def cluster_not_duplicate(conn: sqlite3.Connection, cluster_id: int) -> None:
             (cluster_id,),
         )
         _decision(conn, f"cluster:{cluster_id}", "review.cluster.not_duplicate", {})
+
+
+def bulk_prefer_curated(conn: sqlite3.Connection) -> int:
+    """Swap the winner to a curated copy in every pending cluster where a Takeout
+    copy currently wins over an equal-resolution curated one, and mark them
+    reviewed. Returns the number of clusters changed.
+
+    This is the one case where the auto-chosen winner is usually *not* what the
+    user wants — they'd rather keep their own original than Google's copy.
+
+    Usage:
+        >>> bulk_prefer_curated(conn)  # doctest: +SKIP
+        1485
+    """
+    by_cluster: dict[int, list[sqlite3.Row]] = {}
+    for r in conn.execute(
+        "SELECT c.id AS cid, c.winner_instance_id AS win, m.instance_id AS iid,"
+        " i.effective_trust AS trust, i.width AS w, i.height AS h"
+        " FROM cluster c JOIN cluster_member m ON m.cluster_id = c.id"
+        " JOIN instance i ON i.id = m.instance_id WHERE c.status = 'pending'"
+    ):
+        by_cluster.setdefault(r["cid"], []).append(r)
+
+    changed = 0
+    with conn:
+        for cid, members in by_cluster.items():
+            winner = next((m for m in members if m["iid"] == members[0]["win"]), None)
+            if winner is None or winner["trust"] == "curated":
+                continue
+            alt = next(
+                (
+                    m for m in members
+                    if m["trust"] == "curated" and (m["w"], m["h"]) == (winner["w"], winner["h"])
+                ),
+                None,
+            )
+            if alt is None:
+                continue
+            conn.execute(
+                "UPDATE cluster_member SET role = 'loser' WHERE cluster_id = ?"
+                " AND role = 'winner'",
+                (cid,),
+            )
+            conn.execute(
+                "UPDATE cluster_member SET role = 'winner' WHERE cluster_id = ?"
+                " AND instance_id = ?",
+                (cid, alt["iid"]),
+            )
+            conn.execute(
+                "UPDATE cluster SET winner_instance_id = ?, status = 'reviewed'"
+                " WHERE id = ?",
+                (alt["iid"], cid),
+            )
+            changed += 1
+        if changed:
+            _decision(
+                conn, "clusters", "review.cluster.bulk_prefer_curated",
+                {"count": changed},
+            )
+    return changed
+
+
+def bulk_accept_pending(conn: sqlite3.Connection, include_video: bool = False) -> int:
+    """Accept the auto-chosen winner for every still-pending cluster (keeping the
+    best-scored copy; the rest stay quarantined byte-identical). Video clusters
+    are excluded unless ``include_video`` is set, since videos are never
+    auto-collapsed. Returns the count.
+
+    Usage:
+        >>> bulk_accept_pending(conn)  # doctest: +SKIP
+        5000
+    """
+    where = "status = 'pending'"
+    if not include_video:
+        where += " AND kind != 'near_video'"
+    with conn:
+        cur = conn.execute(f"UPDATE cluster SET status = 'reviewed' WHERE {where}")
+        if cur.rowcount:
+            _decision(
+                conn, "clusters", "review.cluster.bulk_accept",
+                {"count": cur.rowcount, "include_video": include_video},
+            )
+    return cur.rowcount
