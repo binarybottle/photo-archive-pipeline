@@ -97,14 +97,23 @@ def create_app(wt: WorkingTree) -> FastAPI:
 
     @app.get("/dates", response_class=HTMLResponse)
     def dates_list(
-        request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        request: Request,
+        show: str = "",
+        conn: sqlite3.Connection = Depends(get_conn),
     ) -> Response:
+        showing_skipped = show == "skipped"
+        skip_filter = "d.skipped = 1" if showing_skipped else "COALESCE(d.skipped, 0) = 0"
         rows = conn.execute(
-            "SELECT i.id, i.source, i.rel_path, d.cand_exif, d.cand_folder,"
-            " d.cand_takeout, d.cand_filename, d.folder_precision, d.exif_flags"
-            " FROM date_resolution d JOIN instance i ON i.id = d.instance_id"
-            " WHERE d.status = 'conflict' ORDER BY i.source, i.rel_path"
+            "SELECT i.id, i.source, i.rel_path, i.kind, i.flags, d.cand_exif,"
+            " d.cand_folder, d.cand_takeout, d.cand_filename, d.folder_precision,"
+            " d.exif_flags FROM date_resolution d JOIN instance i ON i.id = d.instance_id"
+            f" WHERE d.status = 'conflict' AND {skip_filter}"
+            " ORDER BY i.source, i.rel_path"
         ).fetchall()
+        skipped_count = conn.execute(
+            "SELECT COUNT(*) FROM date_resolution WHERE status = 'conflict'"
+            " AND skipped = 1"
+        ).fetchone()[0]
         groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
         for row in rows:
             key = (row["source"], posixpath.dirname(row["rel_path"]))
@@ -132,8 +141,25 @@ def create_app(wt: WorkingTree) -> FastAPI:
                 }
             )
         return templates.TemplateResponse(
-            request, "dates_list.html", {"total": len(rows), "groups": group_list}
+            request,
+            "dates_list.html",
+            {
+                "total": len(rows), "groups": group_list,
+                "showing_skipped": showing_skipped, "skipped_count": skipped_count,
+            },
         )
+
+    @app.post("/dates/skip")
+    def dates_skip(
+        source: str = Form(...),
+        dir_path: str = Form(""),
+        skipped: str = Form("1"),
+        show: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Response:
+        actions.batch_skip(conn, source, dir_path, skipped == "1")
+        target = "/dates?show=skipped" if show == "skipped" else "/dates"
+        return RedirectResponse(target, status_code=303)
 
     @app.get("/dates/item/{instance_id}", response_class=HTMLResponse)
     def date_item(

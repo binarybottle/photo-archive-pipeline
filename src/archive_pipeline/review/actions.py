@@ -218,6 +218,29 @@ def batch_manual(
     return len(rows)
 
 
+def batch_skip(
+    conn: sqlite3.Connection, source: str, dir_path: str, skipped: bool
+) -> int:
+    """Hide (``skipped=True``) or restore every conflict item in one folder.
+
+    Skipping only affects the queue view — the items stay unresolved conflicts.
+    Returns the number of rows changed.
+
+    Usage:
+        >>> batch_skip(conn, "LOCAL", "Ellora/_movies", True)  # doctest: +SKIP
+        20
+    """
+    like = f"{dir_path}/%" if dir_path else "%"
+    with conn:
+        cur = conn.execute(
+            "UPDATE date_resolution SET skipped = ? WHERE status = 'conflict'"
+            " AND instance_id IN (SELECT id FROM instance WHERE source = ?"
+            " AND rel_path LIKE ? AND rel_path NOT LIKE ?)",
+            (1 if skipped else 0, source, like, f"{like}/%"),
+        )
+    return cur.rowcount
+
+
 PRE_2000_BUCKET = "pre-2000"
 
 

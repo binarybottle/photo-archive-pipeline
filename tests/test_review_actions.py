@@ -13,6 +13,7 @@ from archive_pipeline.review.actions import (
     batch_apply,
     batch_bucket,
     batch_manual,
+    batch_skip,
     cluster_accept,
     cluster_not_duplicate,
     cluster_split,
@@ -195,6 +196,18 @@ def test_batch_manual_validation(conn: sqlite3.Connection) -> None:
         batch_manual(conn, "LOCAL", "old", "June 1998")
     with pytest.raises(ReviewError, match="not a real date"):
         batch_manual(conn, "LOCAL", "old", "1998-13")
+
+
+def test_batch_skip_and_restore(conn: sqlite3.Connection) -> None:
+    a = _instance(conn, "movies/a.jpg")
+    b = _instance(conn, "movies/b.jpg")
+    for iid in (a, b):
+        _resolution(conn, iid)
+    assert batch_skip(conn, "LOCAL", "movies", True) == 2
+    assert _row(conn, a)["skipped"] == 1
+    assert _row(conn, a)["status"] == "conflict"  # still unresolved, just hidden
+    assert batch_skip(conn, "LOCAL", "movies", False) == 2
+    assert _row(conn, a)["skipped"] == 0
 
 
 def test_batch_bucket_pre_2000(conn: sqlite3.Connection) -> None:

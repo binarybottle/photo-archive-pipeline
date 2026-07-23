@@ -193,6 +193,12 @@ SCHEMA_V7 = """
 ALTER TABLE date_resolution ADD COLUMN bucket TEXT;
 """
 
+SCHEMA_V8 = """
+-- Review UI: hide a conflict from the active queue without resolving it, so a
+-- reviewer can defer folders they aren't ready to decide.
+ALTER TABLE date_resolution ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
     Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
@@ -201,6 +207,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(5, "date_resolution.sequence_hint for review (Stage 4)", SCHEMA_V5),
     Migration(6, "cluster_merge for dedup metadata merging (Stage 5)", SCHEMA_V6),
     Migration(7, "date_resolution.bucket for coarse archive buckets", SCHEMA_V7),
+    Migration(8, "date_resolution.skipped to hide conflicts from the queue", SCHEMA_V8),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

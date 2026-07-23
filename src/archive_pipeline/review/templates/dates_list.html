@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Date conflicts — archive review{% endblock %}
 {% block content %}
-<h1>Date conflicts ({{ total }})</h1>
-{% if not groups %}<p>No conflicts. 🎉</p>{% endif %}
+<h1>{% if showing_skipped %}Skipped conflicts{% else %}Date conflicts{% endif %} ({{ total }})</h1>
+{% if showing_skipped %}
+  <p><a href="/dates">← back to active conflicts</a></p>
+{% elif skipped_count %}
+  <p class="muted"><a href="/dates?show=skipped">View {{ skipped_count }} skipped item(s) →</a></p>
+{% endif %}
+{% if not groups %}<p>{% if showing_skipped %}Nothing skipped.{% else %}No conflicts. 🎉{% endif %}</p>{% endif %}
 {% for group in groups %}
 <div class="card">
   <h2>{{ group.source }} / {{ group.dir or "(root)" }}
@@ -42,17 +47,30 @@
       Mark all pre-2000
     </button>
   </form>
+  <form class="inline" method="post" action="/dates/skip">
+    <input type="hidden" name="source" value="{{ group.source }}">
+    <input type="hidden" name="dir_path" value="{{ group.dir }}">
+    <input type="hidden" name="show" value="{{ 'skipped' if showing_skipped else '' }}">
+    {% if showing_skipped %}
+      <input type="hidden" name="skipped" value="0"><button>↩ Un-skip</button>
+    {% else %}
+      <input type="hidden" name="skipped" value="1"><button>Skip for now</button>
+    {% endif %}
+  </form>
   <div class="strip">
     {% for item in group.entries %}
     <a class="conflict-item" href="/dates/item/{{ item.id }}" title="{{ item.rel_path }}">
       <img class="thumb" src="/thumb/{{ item.id }}" alt="{{ item.rel_path }}">
       <span class="cand">
+        {%- if item.kind == "video" %}🎞 video<br>
+        {%- elif item.flags and "corrupt" in item.flags %}⚠ unreadable<br>{% endif -%}
         {%- if item.cand_exif %}EXIF {{ item.cand_exif[:10] }}{% endif -%}
         {%- if item.cand_folder %}<br>folder {{ item.cand_folder }}{% endif -%}
         {%- if item.cand_takeout %}<br>takeout {{ item.cand_takeout[:10] }}{% endif -%}
         {%- if item.cand_filename %}<br>name {{ item.cand_filename[:10] }}{% endif -%}
         {%- if not (item.cand_exif or item.cand_folder or item.cand_takeout
-                    or item.cand_filename) %}<em>no date</em>{% endif -%}
+                    or item.cand_filename or item.kind == "video"
+                    or (item.flags and "corrupt" in item.flags)) %}<em>no date</em>{% endif -%}
       </span>
     </a>
     {% endfor %}

@@ -118,6 +118,45 @@ def test_batch_trust_exif_resolves_scan_batch(
     assert statuses == ["reviewed", "reviewed", "reviewed"]
 
 
+def test_skip_folder_toggle(env: PipelineEnv, client: TestClient) -> None:
+    resp = client.post(
+        "/dates/skip",
+        data={"source": "LOCAL", "dir_path": "scans", "skipped": "1", "show": ""},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    active = client.get("/dates")
+    assert "LOCAL / scans" not in active.text
+    assert "/dates?show=skipped" in active.text  # toggle link appears
+    skipped = client.get("/dates?show=skipped")
+    assert "LOCAL / scans" in skipped.text
+    assert "Un-skip" in skipped.text
+    client.post(
+        "/dates/skip",
+        data={"source": "LOCAL", "dir_path": "scans", "skipped": "0", "show": "skipped"},
+        follow_redirects=False,
+    )
+    assert "LOCAL / scans" in client.get("/dates").text
+
+
+def test_conflict_items_label_video_and_corrupt(
+    env: PipelineEnv, client: TestClient
+) -> None:
+    # The zero-byte image is labeled unreadable, not shown as a broken thumbnail.
+    assert "unreadable" in client.get("/dates").text
+    with env.conn:
+        cur = env.conn.execute(
+            "INSERT INTO instance (source, rel_path, size_bytes, sha256, kind,"
+            " ingest_run_id) VALUES ('LOCAL', 'clips/v.mov', 9, ?, 'video', 1)",
+            ("bb" * 32,),
+        )
+        env.conn.execute(
+            "INSERT INTO date_resolution (instance_id, status) VALUES (?, 'conflict')",
+            (cur.lastrowid,),
+        )
+    assert "video" in client.get("/dates").text
+
+
 def test_pre_2000_bucket_via_form(env: PipelineEnv, client: TestClient) -> None:
     response = client.post(
         "/dates/batch-bucket",
