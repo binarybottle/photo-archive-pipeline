@@ -49,7 +49,10 @@ def test_dates_queue_groups_by_folder(client: TestClient) -> None:
     page = client.get("/dates")
     assert page.status_code == 200
     assert "LOCAL / scans" in page.text
-    assert "Apply folder date to all" in page.text
+    assert "Apply folder date" in page.text
+    assert "Trust EXIF" in page.text
+    # Candidate dates must be shown so batch decisions are informed.
+    assert "2019-11-03" in page.text  # scans' CreateDate candidate, per-item + summary
 
 
 def test_item_page_shows_candidates_and_flags(

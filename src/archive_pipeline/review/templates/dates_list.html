@@ -7,16 +7,33 @@
 <div class="card">
   <h2>{{ group.source }} / {{ group.dir or "(root)" }}
       <span class="pill">{{ group.entries | length }} item(s)</span></h2>
+  <p class="muted">
+    Folder date: <strong>{{ group.folder_date or "—" }}</strong>{% if group.folder_precision %}
+      ({{ group.folder_precision }}){% endif %}
+    &nbsp;·&nbsp; EXIF: <strong>{{ group.exif_summary or "none" }}</strong>
+  </p>
   <form class="inline" method="post" action="/dates/batch">
     <input type="hidden" name="source" value="{{ group.source }}">
     <input type="hidden" name="dir_path" value="{{ group.dir }}">
-    <button name="action" value="folder">Apply folder date to all</button>
-    <button name="action" value="exif">Trust EXIF for all</button>
+    <button name="action" value="folder"{% if not group.folder_date %} disabled{% endif %}>
+      Apply folder date{% if group.folder_date %} → {{ group.folder_date }}{% endif %}
+    </button>
+    <button name="action" value="exif"{% if not group.exif_summary %} disabled{% endif %}>
+      Trust EXIF for all
+    </button>
   </form>
   <div class="strip">
     {% for item in group.entries %}
-    <a href="/dates/item/{{ item.id }}" title="{{ item.rel_path }}">
+    <a class="conflict-item" href="/dates/item/{{ item.id }}" title="{{ item.rel_path }}">
       <img class="thumb" src="/thumb/{{ item.id }}" alt="{{ item.rel_path }}">
+      <span class="cand">
+        {%- if item.cand_exif %}EXIF {{ item.cand_exif[:10] }}{% endif -%}
+        {%- if item.cand_folder %}<br>folder {{ item.cand_folder }}{% endif -%}
+        {%- if item.cand_takeout %}<br>takeout {{ item.cand_takeout[:10] }}{% endif -%}
+        {%- if item.cand_filename %}<br>name {{ item.cand_filename[:10] }}{% endif -%}
+        {%- if not (item.cand_exif or item.cand_folder or item.cand_takeout
+                    or item.cand_filename) %}<em>no date</em>{% endif -%}
+      </span>
     </a>
     {% endfor %}
   </div>

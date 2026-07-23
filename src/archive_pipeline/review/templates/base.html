@@ -14,8 +14,13 @@
              vertical-align: top; }
     .thumb { height: 90px; border: 1px solid #ccc; border-radius: 3px; }
     .thumb.small { height: 60px; }
-    .strip { display: flex; gap: .4rem; overflow-x: auto; padding: .4rem 0; }
+    .strip { display: flex; gap: .6rem; overflow-x: auto; padding: .4rem 0; }
     .strip .current { outline: 3px solid #0645ad; }
+    .conflict-item { display: inline-block; flex: 0 0 auto; text-align: center;
+                     text-decoration: none; color: #333; }
+    .cand { display: block; font-size: .68rem; color: #555; line-height: 1.2;
+            margin-top: .2rem; white-space: nowrap; }
+    button[disabled] { opacity: .4; cursor: not-allowed; }
     form.inline { display: inline; }
     button { cursor: pointer; padding: .2rem .7rem; }
     .muted { color: #777; font-size: .85rem; }

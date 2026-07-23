@@ -100,24 +100,37 @@ def create_app(wt: WorkingTree) -> FastAPI:
         request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Response:
         rows = conn.execute(
-            "SELECT i.id, i.source, i.rel_path FROM date_resolution d"
-            " JOIN instance i ON i.id = d.instance_id"
+            "SELECT i.id, i.source, i.rel_path, d.cand_exif, d.cand_folder,"
+            " d.cand_takeout, d.cand_filename, d.folder_precision, d.exif_flags"
+            " FROM date_resolution d JOIN instance i ON i.id = d.instance_id"
             " WHERE d.status = 'conflict' ORDER BY i.source, i.rel_path"
         ).fetchall()
         groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
         for row in rows:
             key = (row["source"], posixpath.dirname(row["rel_path"]))
             groups.setdefault(key, []).append(row)
+        group_list = []
+        for (source, dir_path), entries in sorted(groups.items()):
+            folder = next((e["cand_folder"] for e in entries if e["cand_folder"]), None)
+            precision = next(
+                (e["folder_precision"] for e in entries if e["cand_folder"]), None
+            )
+            exifs = sorted({e["cand_exif"][:10] for e in entries if e["cand_exif"]})
+            if not exifs:
+                exif_summary = None
+            elif len(exifs) == 1:
+                exif_summary = exifs[0]
+            else:
+                exif_summary = f"{exifs[0]} … {exifs[-1]} ({len(exifs)} distinct)"
+            group_list.append(
+                {
+                    "source": source, "dir": dir_path, "entries": entries,
+                    "folder_date": folder, "folder_precision": precision,
+                    "exif_summary": exif_summary,
+                }
+            )
         return templates.TemplateResponse(
-            request,
-            "dates_list.html",
-            {
-                "total": len(rows),
-                "groups": [
-                    {"source": source, "dir": dir_path, "entries": entries}
-                    for (source, dir_path), entries in sorted(groups.items())
-                ],
-            },
+            request, "dates_list.html", {"total": len(rows), "groups": group_list}
         )
 
     @app.get("/dates/item/{instance_id}", response_class=HTMLResponse)
