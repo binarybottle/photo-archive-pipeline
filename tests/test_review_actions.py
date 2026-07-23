@@ -222,8 +222,31 @@ def test_batch_bucket_pre_2000(conn: sqlite3.Connection) -> None:
     )
     assert row["resolved_source"] == "review"
     assert _last_decision(conn)["rule"] == "review.date.bucket"
-    with pytest.raises(ReviewError, match="unknown bucket"):
+    with pytest.raises(ReviewError, match="not a bucket"):
         batch_bucket(conn, "LOCAL", "old-scans", "medieval")
+
+
+def test_batch_manual_year_range_files_into_bucket(conn: sqlite3.Connection) -> None:
+    a = _instance(conn, "spans/2004-2009/a.jpg")
+    b = _instance(conn, "spans/2004-2009/b.jpg")
+    for iid in (a, b):
+        _resolution(conn, iid)
+    # A YYYY-YYYY entry in the manual field becomes a range bucket, not a date.
+    assert batch_manual(conn, "LOCAL", "spans/2004-2009", "2004-2009") == 2
+    row = _row(conn, a)
+    assert (row["status"], row["bucket"], row["resolved_date"]) == (
+        "reviewed", "2004-2009", None
+    )
+
+
+def test_year_range_validation(conn: sqlite3.Connection) -> None:
+    iid = _instance(conn, "spans/x.jpg")
+    _resolution(conn, iid)
+    with pytest.raises(ReviewError, match="start after end"):
+        batch_manual(conn, "LOCAL", "spans", "2009-2004")
+    # A year-month (YYYY-MM) is still a date, not a range.
+    assert batch_manual(conn, "LOCAL", "spans", "2005-06") == 1
+    assert _row(conn, iid)["resolved_date"] == "2005-06-01"
 
 
 def test_sequence_hint(conn: sqlite3.Connection) -> None:

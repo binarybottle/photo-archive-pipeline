@@ -35,7 +35,7 @@
     <input type="hidden" name="source" value="{{ group.source }}">
     <input type="hidden" name="dir_path" value="{{ group.dir }}">
     <label class="muted">Set all to:
-      <input name="date" size="12" placeholder="YYYY / YYYY-MM / YYYY-MM-DD" required>
+      <input name="date" size="16" placeholder="YYYY / YYYY-MM-DD / YYYY-YYYY" required>
     </label>
     <button>Apply to all {{ group.entries | length }}</button>
   </form>

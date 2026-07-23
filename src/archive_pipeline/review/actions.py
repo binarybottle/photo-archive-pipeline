@@ -183,13 +183,17 @@ def batch_manual(
     """Assign a manually typed date to every conflict item in one folder.
 
     Accepts a partial date and infers its precision: ``YYYY`` (year),
-    ``YYYY-MM`` (month), or ``YYYY-MM-DD`` (day). Returns the count updated.
+    ``YYYY-MM`` (month), or ``YYYY-MM-DD`` (day). A year range ``YYYY-YYYY`` is
+    filed into that range bucket instead (``archive/YYYY-YYYY/``). Returns the
+    count updated.
 
     Usage:
         >>> batch_manual(conn, "LOCAL", "Ellora/2004", "2004")  # doctest: +SKIP
         116
     """
     entered = entered.strip()
+    if _YEAR_RANGE.match(entered):
+        return batch_bucket(conn, source, dir_path, entered)
     date = precision = None
     for pattern, prec, template in _PARTIAL_DATE:
         if pattern.match(entered):
@@ -242,6 +246,28 @@ def batch_skip(
 
 
 PRE_2000_BUCKET = "pre-2000"
+_YEAR_RANGE = re.compile(r"^(?P<a>(19|20)\d{2})-(?P<b>(19|20)\d{2})$")
+
+
+def normalize_bucket(bucket: str) -> str:
+    """Validate a coarse-bucket name, returning it, or raise ``ReviewError``.
+
+    Allowed: ``pre-2000`` or a year range ``YYYY-YYYY`` (start <= end). Both are
+    safe folder names filed under ``archive/<bucket>/``.
+
+    Usage:
+        >>> normalize_bucket("2004-2009")
+        '2004-2009'
+    """
+    bucket = bucket.strip()
+    if bucket == PRE_2000_BUCKET:
+        return bucket
+    match = _YEAR_RANGE.match(bucket)
+    if not match:
+        raise ReviewError(f"not a bucket (want pre-2000 or YYYY-YYYY): {bucket!r}")
+    if int(match["a"]) > int(match["b"]):
+        raise ReviewError(f"range start after end: {bucket}")
+    return bucket
 
 
 def batch_bucket(
@@ -249,16 +275,16 @@ def batch_bucket(
 ) -> int:
     """File every conflict item in one folder into a coarse archive bucket.
 
-    Used for photos the user knows only loosely — e.g. ``pre-2000`` for old,
-    undateable images. The bucket becomes an ``archive/<bucket>/`` folder at
-    materialize; the row is marked reviewed so re-resolution leaves it alone.
+    Used for photos the user knows only loosely — ``pre-2000`` for old,
+    undateable images, or a year range ``YYYY-YYYY`` for a span. The bucket
+    becomes an ``archive/<bucket>/`` folder at materialize; the row is marked
+    reviewed so re-resolution leaves it alone.
 
     Usage:
-        >>> batch_bucket(conn, "LOCAL", "old-scans", "pre-2000")  # doctest: +SKIP
+        >>> batch_bucket(conn, "LOCAL", "2004-2009", "2004-2009")  # doctest: +SKIP
         42
     """
-    if bucket != PRE_2000_BUCKET:
-        raise ReviewError(f"unknown bucket: {bucket}")
+    bucket = normalize_bucket(bucket)
     like = f"{dir_path}/%" if dir_path else "%"
     rows = conn.execute(
         "SELECT d.instance_id FROM date_resolution d JOIN instance i"
