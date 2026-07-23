@@ -51,6 +51,21 @@ def test_filename_candidate_patterns() -> None:
     assert filename_candidate("x/IMG_20151340_000000.jpg", p) is None  # month 13
 
 
+def test_filename_candidate_embedded_date() -> None:
+    p = DEFAULT_FILENAME_DATE_PATTERNS
+    # A valid YYYYMMDD embedded mid-name (day precision).
+    assert filename_candidate("x/kory_nyc_200704_ellora_20070408_PD(10).JPG", p) == (
+        "2007-04-08", "day"
+    )
+    assert filename_candidate("x/20030916_ultrasound.jpg", p) == ("2003-09-16", "day")
+    assert filename_candidate("x/IMG00063-20101121-1633.jpg", p) == ("2010-11-21", "day")
+    # No false positives: sub-date numbers, invalid months/days, long digit runs.
+    assert filename_candidate("x/200704_note.jpg", p) is None       # only 6 digits
+    assert filename_candidate("x/20991340.jpg", p) is None          # month 13, day 40
+    assert filename_candidate("x/serial_120070408.jpg", p) is None  # 9-digit run
+    assert filename_candidate("x/12345678.jpg", p) is None          # year 1234
+
+
 def test_exif_candidate_fallback_to_createdate() -> None:
     assert exif_candidate("1998-07-12T14:33:05", {"XMP:CreateDate": "x"}) == (
         "1998-07-12T14:33:05", False
@@ -202,3 +217,69 @@ def test_distrusted_exif_never_wins_over_curated_folder() -> None:
         ["mass_identical"],
     )
     assert r.rule == "R3"
+
+
+# --- Filename refinement of coarse folder dates --------------------------------
+
+
+def test_r3f_filename_refines_curated_year_folder() -> None:
+    r = resolve(
+        Candidates(folder="2003-01-01", folder_precision="year", folder_trusted=True,
+                   filename="2003-09-16", filename_precision="day"),
+        ["epoch_default"],
+    )
+    assert (r.rule, r.source, r.date, r.precision, r.status) == (
+        "R3f", "filename", "2003-09-16", "day", "auto"
+    )
+
+
+def test_r3c_filename_contradicts_curated_folder_year() -> None:
+    r = resolve(
+        Candidates(folder="2003-01-01", folder_precision="year", folder_trusted=True,
+                   filename="2007-04-08", filename_precision="day"),
+        ["epoch_default"],
+    )
+    assert (r.rule, r.status, r.date) == ("R3c", "conflict", None)
+
+
+def test_r4bf_filename_refines_takeout_year_folder() -> None:
+    r = resolve(
+        Candidates(folder="2019-01-01", folder_precision="year", folder_trusted=False,
+                   filename="2019-08-12", filename_precision="day"),
+        [],
+    )
+    assert (r.rule, r.source, r.date, r.precision) == (
+        "R4bf", "filename", "2019-08-12", "day"
+    )
+
+
+def test_r4bc_filename_contradicts_takeout_year_folder() -> None:
+    r = resolve(
+        Candidates(folder="2019-01-01", folder_precision="year", folder_trusted=False,
+                   filename="2015-08-12", filename_precision="day"),
+        [],
+    )
+    assert (r.rule, r.status) == ("R4bc", "conflict")
+
+
+def test_folder_stands_when_no_filename_date() -> None:
+    # Regression: the refinement path must not disturb plain folder resolution.
+    curated = resolve(
+        Candidates(folder="2003-07-01", folder_precision="month", folder_trusted=True), []
+    )
+    assert (curated.rule, curated.source, curated.date) == ("R3", "folder", "2003-07-01")
+    takeout = resolve(
+        Candidates(folder="2019-01-01", folder_precision="year", folder_trusted=False), []
+    )
+    assert (takeout.rule, takeout.source) == ("R4b", "folder")
+
+
+def test_takeout_sidecar_beats_filename_refinement() -> None:
+    # A usable sidecar (R4) still wins before the folder/filename step.
+    r = resolve(
+        Candidates(folder="2019-01-01", folder_precision="year", folder_trusted=False,
+                   takeout="2019-08-12T10:00:00", filename="2019-08-13",
+                   filename_precision="day"),
+        [],
+    )
+    assert r.rule == "R4"

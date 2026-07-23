@@ -46,7 +46,8 @@ _SCANNED_MIMES = frozenset({"image/tiff", "image/png"})
 _CREATE_DATE_KEYS = ("EXIF:CreateDate", "QuickTime:CreateDate", "XMP:CreateDate")
 
 _CONFIDENCE = {
-    "R1": 0.95, "R2": 0.85, "R3": 0.8, "R4": 0.7, "R4b": 0.6, "R5": 0.5,
+    "R1": 0.95, "R2": 0.85, "R3": 0.8, "R3f": 0.82, "R4": 0.7,
+    "R4b": 0.6, "R4bf": 0.68, "R5": 0.5,
 }
 
 
@@ -122,15 +123,23 @@ def filename_candidate(
 ) -> tuple[str, str] | None:
     """Filename date -> (ISO date/datetime, precision second|day), else None.
 
+    Patterns are searched (not just anchored), so a ``^``-anchored pattern still
+    only matches at the start while an unanchored one (e.g. an embedded
+    ``YYYYMMDD``) can match anywhere in the name. First matching pattern wins.
+
     Usage:
         >>> filename_candidate("x/IMG_20150418_093000.jpg",
         ...     (r"^IMG_(?P<year>\\d{4})(?P<month>\\d{2})(?P<day>\\d{2})"
         ...      r"_(?P<hour>\\d{2})(?P<minute>\\d{2})(?P<second>\\d{2})",))
         ('2015-04-18T09:30:00', 'second')
+        >>> filename_candidate("x/trip_20070408_PD.jpg",
+        ...     (r"(?<![\\d])(?P<year>(19|20)\\d{2})(?P<month>0[1-9]|1[0-2])"
+        ...      r"(?P<day>0[1-9]|[12]\\d|3[01])(?![\\d])",))
+        ('2007-04-08', 'day')
     """
     name = posixpath.basename(rel_path)
     for pattern in patterns:
-        match = re.match(pattern, name)
+        match = re.search(pattern, name)
         if not match:
             continue
         g = match.groupdict()
@@ -210,13 +219,50 @@ def _within(exif_iso: str, folder_iso: str, precision: str | None) -> bool:
     return exif_iso[:10] == folder_iso[:10]
 
 
+def _folder_or_filename(
+    c: Candidates,
+    folder_date: str,
+    folder_rule: str,
+    refine_rule: str,
+    conflict_rule: str,
+) -> Resolution:
+    """Resolve a folder-based date, letting a filename date refine or contest it.
+
+    With no filename date the folder date stands at folder precision. With one,
+    a filename date inside the folder's granularity refines the result to the
+    filename's finer precision (a ``2003`` folder with ``20030916`` in the name
+    becomes day-precise); a filename date outside that granularity contradicts
+    the folder placement and is queued for review.
+    """
+    if not c.filename:
+        return Resolution(
+            folder_date, c.folder_precision, "folder", "auto",
+            _CONFIDENCE[folder_rule], folder_rule,
+        )
+    if _within(c.filename, folder_date, c.folder_precision):
+        return Resolution(
+            c.filename, c.filename_precision, "filename", "auto",
+            _CONFIDENCE[refine_rule], refine_rule,
+        )
+    return Resolution(None, None, None, "conflict", None, conflict_rule)
+
+
 def resolve(c: Candidates, flags: list[str]) -> Resolution:
-    """Apply rules R1..R7 (first match wins) to one instance's candidates.
+    """Apply the resolution rules (first match wins) to one instance's candidates.
+
+    Rules: R1 (EXIF within curated folder), R6 (EXIF conflicts curated folder),
+    R2 (trusted EXIF), R3/R3f/R3c (curated folder, optionally filename-refined
+    or -contested), R4 (Takeout sidecar), R4b/R4bf/R4bc (Takeout folder,
+    optionally filename-refined or -contested), R5 (filename only), R7 (none).
 
     Usage:
         >>> resolve(Candidates(exif="1998-07-12T14:33:05", folder="1998-01-01",
         ...                    folder_precision="year", folder_trusted=True), []).rule
         'R1'
+        >>> resolve(Candidates(folder="2003-01-01", folder_precision="year",
+        ...                    folder_trusted=True, filename="2003-09-16",
+        ...                    filename_precision="day"), ["epoch_default"]).rule
+        'R3f'
     """
     exif_trusted = c.exif is not None and not flags
     curated_folder = c.folder if c.folder_trusted else None
@@ -228,15 +274,11 @@ def resolve(c: Candidates, flags: list[str]) -> Resolution:
     if exif_trusted:
         return Resolution(c.exif, "second", "exif", "auto", _CONFIDENCE["R2"], "R2")
     if curated_folder:
-        return Resolution(
-            curated_folder, c.folder_precision, "folder", "auto", _CONFIDENCE["R3"], "R3"
-        )
+        return _folder_or_filename(c, curated_folder, "R3", "R3f", "R3c")
     if c.takeout and not c.takeout_is_upload_artifact:
         return Resolution(c.takeout, "second", "takeout_json", "auto", _CONFIDENCE["R4"], "R4")
     if c.folder:
-        return Resolution(
-            c.folder, c.folder_precision, "folder", "auto", _CONFIDENCE["R4b"], "R4b"
-        )
+        return _folder_or_filename(c, c.folder, "R4b", "R4bf", "R4bc")
     if c.filename:
         return Resolution(
             c.filename, c.filename_precision, "filename", "auto", _CONFIDENCE["R5"], "R5"
