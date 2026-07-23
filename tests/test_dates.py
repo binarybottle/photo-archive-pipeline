@@ -111,6 +111,15 @@ def test_filename_candidate_hyphenated_date() -> None:
     assert filename_candidate("x/2016-13-01.jpg", p) is None  # month 13
 
 
+def test_filename_candidate_range_is_not_a_single_date() -> None:
+    p = DEFAULT_FILENAME_DATE_PATTERNS
+    # A date range is a span, not a capture date — no single date extracted.
+    assert filename_candidate("x/20040904_to_20090926_01003.jpg", p) is None
+    assert filename_candidate("x/2004_to_2009_batch.jpg", p) is None
+    # "to" inside a word does not trigger the range guard.
+    assert filename_candidate("x/20040904_tokyo.jpg", p) == ("2004-09-04", "day")
+
+
 def test_filename_candidate_year_month() -> None:
     p = DEFAULT_FILENAME_DATE_PATTERNS
     assert filename_candidate("x/200804_SanFrancisco_DSCN0200.JPG", p) == (

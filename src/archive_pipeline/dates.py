@@ -40,6 +40,13 @@ from archive_pipeline.workingtree import WorkingTree
 
 AUDIT_REPORT = "date_audit_sample.csv"
 
+#: A date range in a filename ("20040904_to_20090926", "2004 to 2009"): a span,
+#: not a single capture date, so no single-date candidate should be extracted.
+_RANGE_FILENAME = re.compile(
+    r"(?<!\d)(?:19|20)\d{2}(?:[-.]?\d{2}[-.]?\d{2})?[-_ ]+to[-_ ]+(?:19|20)\d{2}",
+    re.IGNORECASE,
+)
+
 _EPOCH_DEFAULT_DATES = frozenset({"1970-01-01", "1980-01-01", "2000-01-01"})
 _SCAN_DATE_YEARS = 2  # EXIF this many years after a day/month folder = scan date
 _SCANNED_MIMES = frozenset({"image/tiff", "image/png"})
@@ -146,6 +153,8 @@ def filename_candidate(
         ('2007-04-08', 'day')
     """
     name = posixpath.basename(rel_path)
+    if _RANGE_FILENAME.search(name):
+        return None
     for pattern in patterns:
         match = re.search(pattern, name)
         if not match:

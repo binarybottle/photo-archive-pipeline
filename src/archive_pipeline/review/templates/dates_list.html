@@ -4,8 +4,14 @@
 <h1>{% if showing_skipped %}Skipped conflicts{% else %}Date conflicts{% endif %} ({{ total }})</h1>
 {% if showing_skipped %}
   <p><a href="/dates">← back to active conflicts</a></p>
-{% elif skipped_count %}
+{% else %}
+  {% if dedup_hidden %}
+  <p class="muted">{{ dedup_hidden }} duplicate copies hidden — dedup already settled
+    their date (only the kept copy's date reaches the archive).</p>
+  {% endif %}
+  {% if skipped_count %}
   <p class="muted"><a href="/dates?show=skipped">View {{ skipped_count }} skipped item(s) →</a></p>
+  {% endif %}
 {% endif %}
 {% if not groups %}<p>{% if showing_skipped %}Nothing skipped.{% else %}No conflicts. 🎉{% endif %}</p>{% endif %}
 {% for group in groups %}
@@ -35,7 +41,8 @@
     <input type="hidden" name="source" value="{{ group.source }}">
     <input type="hidden" name="dir_path" value="{{ group.dir }}">
     <label class="muted">Set all to:
-      <input name="date" size="16" placeholder="YYYY / YYYY-MM-DD / YYYY-YYYY" required>
+      <input name="date" size="16" placeholder="YYYY / YYYY-MM-DD / YYYY-YYYY"
+             value="{{ group.suggest }}" required>
     </label>
     <button>Apply to all {{ group.entries | length }}</button>
   </form>

@@ -187,6 +187,51 @@ def test_video_thumbnail_extracted(env: PipelineEnv, client: TestClient) -> None
     assert len(resp.content) > len(_placeholder_jpeg())
 
 
+def test_dedup_losers_hidden_from_date_queue(
+    env: PipelineEnv, client: TestClient
+) -> None:
+    scan1 = _iid(env.conn, "scans/scan001.png")
+    scan2 = _iid(env.conn, "scans/scan002.png")
+    with env.conn:
+        cur = env.conn.execute(
+            "INSERT INTO cluster (kind, status, winner_instance_id)"
+            " VALUES ('near_image', 'auto', ?)",
+            (scan2,),
+        )
+        cid = cur.lastrowid
+        env.conn.execute(
+            "INSERT INTO cluster_member (cluster_id, instance_id, role)"
+            " VALUES (?, ?, 'winner'), (?, ?, 'loser')",
+            (cid, scan2, cid, scan1),
+        )
+        env.conn.execute(
+            "INSERT INTO cluster_merge (cluster_id, merged_json, needs_review)"
+            ' VALUES (?, ?, 0)',
+            (cid, '{"date": {"date": "2019-11-03"}}'),
+        )
+    page = client.get("/dates")
+    assert "scan003.png" in page.text          # singleton conflict stays
+    assert "scan001.png" not in page.text       # loser hidden
+    assert "scan002.png" not in page.text       # winner of a dated cluster hidden
+    assert "duplicate copies hidden" in page.text
+
+
+def test_range_folder_prefills_manual_field(
+    env: PipelineEnv, client: TestClient
+) -> None:
+    with env.conn:
+        cur = env.conn.execute(
+            "INSERT INTO instance (source, rel_path, size_bytes, sha256, kind,"
+            " ingest_run_id) VALUES ('LOCAL', 'spans/2004-2009/x.jpg', 1, ?, 'image', 1)",
+            ("ab" * 32,),
+        )
+        env.conn.execute(
+            "INSERT INTO date_resolution (instance_id, status) VALUES (?, 'conflict')",
+            (cur.lastrowid,),
+        )
+    assert 'value="2004-2009"' in client.get("/dates").text
+
+
 def test_pre_2000_bucket_via_form(env: PipelineEnv, client: TestClient) -> None:
     response = client.post(
         "/dates/batch-bucket",

@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import json
 import posixpath
+import re
 import sqlite3
 from collections.abc import Iterator
 from datetime import datetime, timedelta
@@ -33,6 +34,9 @@ from archive_pipeline.video import extract_frame
 from archive_pipeline.workingtree import WorkingTree
 
 pillow_heif.register_heif_opener()
+
+#: A folder literally named as a year span, e.g. "2004-2009" -> suggest the range.
+_RANGE_FOLDER = re.compile(r"^(19|20)\d{2}-(19|20)\d{2}$")
 
 _THUMB_EDGE = 480
 _CAMERA_WINDOW = timedelta(hours=1)
@@ -104,16 +108,34 @@ def create_app(wt: WorkingTree) -> FastAPI:
     ) -> Response:
         showing_skipped = show == "skipped"
         skip_filter = "d.skipped = 1" if showing_skipped else "COALESCE(d.skipped, 0) = 0"
+        # After dedup, a cluster loser goes to quarantine byte-identical (its date
+        # never reaches the archive), and a winner whose cluster already has a
+        # merged date is settled — neither needs date review. Singletons and
+        # members of still-undated clusters remain.
+        dedup_settled = (
+            "EXISTS (SELECT 1 FROM cluster_member cm"
+            " LEFT JOIN cluster_merge cmg ON cmg.cluster_id = cm.cluster_id"
+            " WHERE cm.instance_id = i.id AND (cm.role = 'loser' OR"
+            " (cm.role = 'winner' AND json_extract(cmg.merged_json, '$.date.date')"
+            " IS NOT NULL)))"
+        )
+        where = f"d.status = 'conflict' AND {skip_filter}"
+        if not showing_skipped:
+            where += f" AND NOT {dedup_settled}"
         rows = conn.execute(
             "SELECT i.id, i.source, i.rel_path, i.kind, i.flags, d.cand_exif,"
             " d.cand_folder, d.cand_takeout, d.cand_filename, d.folder_precision,"
             " d.exif_flags FROM date_resolution d JOIN instance i ON i.id = d.instance_id"
-            f" WHERE d.status = 'conflict' AND {skip_filter}"
-            " ORDER BY i.source, i.rel_path"
+            f" WHERE {where} ORDER BY i.source, i.rel_path"
         ).fetchall()
         skipped_count = conn.execute(
             "SELECT COUNT(*) FROM date_resolution WHERE status = 'conflict'"
             " AND skipped = 1"
+        ).fetchone()[0]
+        dedup_hidden = conn.execute(
+            "SELECT COUNT(*) FROM date_resolution d JOIN instance i"
+            " ON i.id = d.instance_id WHERE d.status = 'conflict'"
+            f" AND COALESCE(d.skipped, 0) = 0 AND {dedup_settled}"
         ).fetchone()[0]
         groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
         for row in rows:
@@ -133,12 +155,14 @@ def create_app(wt: WorkingTree) -> FastAPI:
                     return vals[0]
                 return f"{vals[0]} … {vals[-1]} ({len(vals)} distinct)"
 
+            last = posixpath.basename(dir_path)
             group_list.append(
                 {
                     "source": source, "dir": dir_path, "entries": entries,
                     "folder_date": folder, "folder_precision": precision,
                     "exif_summary": summarize("cand_exif"),
                     "filename_summary": summarize("cand_filename"),
+                    "suggest": last if _RANGE_FOLDER.match(last) else "",
                 }
             )
         return templates.TemplateResponse(
@@ -147,6 +171,7 @@ def create_app(wt: WorkingTree) -> FastAPI:
             {
                 "total": len(rows), "groups": group_list,
                 "showing_skipped": showing_skipped, "skipped_count": skipped_count,
+                "dedup_hidden": dedup_hidden,
             },
         )
 
