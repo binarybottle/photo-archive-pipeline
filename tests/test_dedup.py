@@ -249,11 +249,22 @@ def _plan(members: list[Media], kind: str = "near_image", weak: bool = False) ->
     return _plan_cluster(members, kind, weak, CFG, {}, {})
 
 
-def test_margin_guardrail_fires_on_close_scores() -> None:
+def test_near_image_close_scores_auto_resolve() -> None:
+    # Near-identical copies score near-equal; near_image is exempt from the
+    # score-margin guardrail (low-stakes winner choice, losers quarantined).
     a = mk(1, "a/x.jpg", sha256="s1")
     b = mk(2, "b/x.jpg", sha256="s2")  # identical facts -> identical score
     plan = _plan([a, b])
-    assert plan.status == "pending"
+    assert plan.status == "auto"
+    assert "score_margin" not in plan.guardrails
+
+
+def test_margin_guardrail_still_flags_non_near_image() -> None:
+    # The guardrail still applies to other multi-copy kinds (e.g. near_video),
+    # where a close score is not exempt.
+    a = mk(1, "a/v.mp4", sha256="s1", kind="video")
+    b = mk(2, "b/v.mp4", sha256="s2", kind="video")  # identical -> tie
+    plan = _plan([a, b], kind="near_video")
     assert "score_margin" in plan.guardrails
 
 

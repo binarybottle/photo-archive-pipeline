@@ -175,13 +175,16 @@ def test_near_duplicates_and_edited_exclusion(tmp_path: Path) -> None:
     ).fetchone()
     assert winner["rel_path"] == "2020/a1.jpg"
 
+    # a2 (q95) and c2 (q50) are near-identical, same-resolution copies. near_image
+    # is exempt from the score-margin guardrail, so this auto-resolves to the
+    # higher-scored (larger) copy instead of queuing for review.
     margin_cluster = _cluster_of(conn, "2020/a2.jpg")
-    assert margin_cluster["status"] == "pending"
-    decision = conn.execute(
-        "SELECT detail FROM decision WHERE subject = ? AND stage = 'dedup'",
-        (f"cluster:{margin_cluster['id']}",),
+    assert margin_cluster["status"] == "auto"
+    winner = conn.execute(
+        "SELECT rel_path FROM instance WHERE id = ?",
+        (margin_cluster["winner_instance_id"],),
     ).fetchone()
-    assert "score_margin" in decision["detail"]
+    assert winner["rel_path"] == "2020/a2.jpg"
 
     # The edited pair is linked, not clustered: neither file is in any cluster.
     for rel in ("2020/e.jpg", "2020/e-edited.jpg"):

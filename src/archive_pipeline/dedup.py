@@ -595,7 +595,14 @@ def _plan_cluster(
     winner = ordered[0]
     guardrails: list[str] = []
     if kind != "exact":
-        if len(ordered) > 1 and (
+        # Near-image clusters are near-identical by construction (pHash within
+        # T1, dHash within T2, same aspect), so a close winner score is not a
+        # decision worth a human: the higher-scored copy is taken and the rest
+        # go to quarantine byte-identical (recoverable). The consequential cases
+        # keep their own guardrails below — crops (aspect), Takeout-over-curated,
+        # and the fuzzy possible-duplicate band (distances above T1). Exact
+        # clusters are byte-identical, so they never flag on score either.
+        if kind != "near_image" and len(ordered) > 1 and (
             scores[ordered[0].id][0] - scores[ordered[1].id][0]
             < cfg.dedup.guardrail_margin
         ):
