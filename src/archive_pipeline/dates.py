@@ -95,15 +95,23 @@ def folder_candidate(
 ) -> tuple[str, str] | None:
     """Deepest path component matching a folder date pattern -> (date, precision).
 
+    Patterns are searched, so a ``^``-anchored pattern still requires the whole
+    component while an unanchored one (e.g. an embedded ``YYYYMMDD``) can match
+    a date buried in a name like ``card-telling_20060624``.
+
     Usage:
         >>> folder_candidate("2003-07/park.jpg", (r"^(?P<year>\\d{4})-(?P<month>\\d{2})$",))
         ('2003-07-01', 'month')
+        >>> folder_candidate("card-telling_20060624/v.mp4",
+        ...     (r"(?<![\\d])(?P<year>(19|20)\\d{2})(?P<month>0[1-9]|1[0-2])"
+        ...      r"(?P<day>0[1-9]|[12]\\d|3[01])(?![\\d])",))
+        ('2006-06-24', 'day')
     """
     compiled = [re.compile(p) for p in patterns]
     components = rel_path.split("/")[:-1]
     for component in reversed(components):
         for pattern in compiled:
-            match = pattern.match(component)
+            match = pattern.search(component)
             if not match:
                 continue
             groups = match.groupdict()
@@ -211,12 +219,20 @@ def compute_exif_flags(
 
 
 def _within(exif_iso: str, folder_iso: str, precision: str | None) -> bool:
-    """True when the EXIF date falls inside the folder date's granularity."""
-    if precision == "year":
-        return exif_iso[:4] == folder_iso[:4]
-    if precision == "month":
+    """True when a trusted candidate date is close enough to the folder date to
+    use the candidate rather than flag a conflict.
+
+    A *day*-labeled folder tolerates any day in the same month: event folders
+    named with a single date are approximate, and the camera timestamp is the
+    more reliable date, so a photo from a nearby day in the folder resolves to
+    its own EXIF rather than becoming a spurious conflict. Month and year
+    folders bracket the same month and year respectively. A different month
+    (for day/month folders) or year still conflicts — that signals a real clock
+    error or misfile.
+    """
+    if precision in ("day", "month"):
         return exif_iso[:7] == folder_iso[:7]
-    return exif_iso[:10] == folder_iso[:10]
+    return exif_iso[:4] == folder_iso[:4]
 
 
 def _folder_or_filename(

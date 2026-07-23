@@ -51,6 +51,20 @@ def test_folder_candidate_year_at_end_and_uncertain() -> None:
     assert folder_candidate("Japan/a.jpg", p) is None
 
 
+def test_folder_candidate_embedded_yyyymmdd() -> None:
+    p = DEFAULT_FOLDER_DATE_PATTERNS
+    assert folder_candidate("card-telling_20060624/v.mp4", p) == ("2006-06-24", "day")
+    assert folder_candidate("trip_20060624_final/a.jpg", p) == ("2006-06-24", "day")
+    # Deepest date-bearing component wins.
+    assert folder_candidate("2010/event_20100715/a.jpg", p) == ("2010-07-15", "day")
+    # An explicit YYYY-MM-DD folder still resolves via its own pattern, not this.
+    assert folder_candidate("2010-06-15/a.jpg", p) == ("2010-06-15", "day")
+    # No false positives on ranges or non-date digit runs.
+    assert folder_candidate("2004-2009/a.jpg", p) is None
+    assert folder_candidate("batch_00012345/a.jpg", p) is None  # year 0001
+    assert folder_candidate("id_20069999/a.jpg", p) is None     # month 99
+
+
 def test_filename_candidate_patterns() -> None:
     p = DEFAULT_FILENAME_DATE_PATTERNS
     assert filename_candidate("x/IMG_20150418_093000.jpg", p) == (
@@ -157,6 +171,26 @@ def test_r1_exif_within_folder_granularity() -> None:
     assert (r.rule, r.source, r.date, r.precision, r.status) == (
         "R1", "exif", EXIF, "second", "auto"
     )
+
+
+def test_r1_day_folder_tolerates_same_month_exif() -> None:
+    # A day-labeled folder with a photo from a nearby day in the same month
+    # uses the precise EXIF (R1), not a conflict — multi-day event folders.
+    r = resolve(
+        Candidates(exif="2006-06-28T10:00:00", folder="2006-06-24",
+                   folder_precision="day", folder_trusted=True),
+        [],
+    )
+    assert (r.rule, r.source, r.date) == ("R1", "exif", "2006-06-28T10:00:00")
+
+
+def test_r6_day_folder_conflicts_different_month() -> None:
+    r = resolve(
+        Candidates(exif="2006-09-01T10:00:00", folder="2006-06-24",
+                   folder_precision="day", folder_trusted=True),
+        [],
+    )
+    assert (r.rule, r.status) == ("R6", "conflict")
 
 
 def test_r2_exif_trusted_no_folder() -> None:

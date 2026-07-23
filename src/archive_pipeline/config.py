@@ -38,6 +38,11 @@ DEFAULT_FOLDER_DATE_PATTERNS: tuple[str, ...] = (
     r"^(?P<event>.*[^\d_ -])[_ -](?P<year>(19|20)\d{2})$",
     # Uncertain year marked with a trailing ? or ~ (year precision): "2005?".
     r"^(?P<year>(19|20)\d{2})[?~]$",
+    # A validated YYYYMMDD embedded anywhere in a folder component (day
+    # precision), non-digit-bounded so serial numbers aren't mistaken for
+    # dates: "card-telling_20060624", "trip_20060624_final".
+    r"(?<![\d])(?P<year>(19|20)\d{2})(?P<month>0[1-9]|1[0-2])"
+    r"(?P<day>0[1-9]|[12]\d|3[01])(?![\d])",
 )
 
 #: Filename date patterns (spec Stage 3): IMG_/VID_/PXL_ camera names, bare
