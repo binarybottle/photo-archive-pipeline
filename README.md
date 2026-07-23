@@ -1,123 +1,249 @@
 # photo-archive-pipeline
 
-Non-destructive consolidation of ~30 years of photos and videos from a locally
-organized tree and Google Takeout exports into a single canonical, date-organized
-archive with embedded metadata, controlled deduplication, and verifiable zero-loss
-guarantees. The full design lives in `photo_archive_pipeline_spec.md`; the rules for
-working in this repo live in `CLAUDE.md`.
+Consolidates ~30 years of photos and videos — a locally organized folder tree
+plus one or more Google Takeout exports — into a single, canonical,
+date-organized archive (`archive/YYYY/YYYY-MM/…`) with dates, GPS, captions, and
+topical keywords embedded in the files themselves.
 
-## Status
+**The promise:** your source files are opened read-only and never modified,
+nothing is ever deleted (duplicates and rejects go to a quarantine you purge
+later, by hand), and a final `verify` step proves on disk that every original is
+accounted for. Everything the pipeline writes lives under one working-tree
+directory — delete it and your originals are untouched.
 
-**All milestones (M1–M8) complete** — the full pipeline is implemented. Working
-today:
+Design details are in `photo_archive_pipeline_spec.md`; contributor rules are in
+`CLAUDE.md`.
 
-- `archive ingest` (M2): full source inventory — streamed SHA-256, signature MIME,
-  exiftool batch EXIF, perceptual hashes, video keyframe signatures (needs ffmpeg),
-  Takeout zip staging with disk-space preflight, size+mtime resumability.
-- `archive takeout-normalize` (M3): sidecar-to-media matching (exact /
-  supplemental-metadata, truncation, `(n)` numbering in both orderings), `-edited`
-  pair linkage, album-folder memberships, `google_recompressed` heuristic, and a
-  CSV report of everything unmatched. Idempotent re-runs.
-- `archive local-provenance` (M4, Stage 2b): classifies every LOCAL directory as
-  curated vs takeout-derived (sidecar/name/descriptor/recompression signals),
-  exports `reports/local_provenance.csv` for review, honors config overrides,
-  assigns effective trust, and parses sidecars inside derived subtrees.
-- `archive date-resolve` (M4, Stage 3): EXIF/folder/Takeout/filename candidates,
-  distrust heuristics (epoch defaults, mass-identical, camera era, scan-date,
-  CreateDate-only scans), rules R1–R7 with full decision logging, reviewed rows
-  preserved, and `reports/date_audit_sample.csv` for user audit.
-- `archive review serve` (M5, Stage 4): local web UI on 127.0.0.1 — date-conflict
-  queue grouped by folder with thumbnails, per-item candidate/flag detail with
-  same-folder and same-camera filmstrips, accept-candidate / manual date with
-  precision / SequenceHint, batch "apply folder date" and "trust EXIF", plus a
-  duplicate-cluster queue (accept / swap winner / split out / not-a-duplicate).
-  Every action appends to the decision log as `review:user`; reviewed rows
-  survive re-resolution.
-- `archive dedup` (M6, Stage 5): exact clusters by SHA-256, RAW+JPEG and
-  Live-photo companion pairing, banded-pHash near-image clustering with dHash +
-  aspect confirmation and a possible-duplicate review band, conservative
-  near-video matching (never auto-discarded), the spec winner-score formula
-  with logged breakdowns, guardrails (score margin, takeout-over-curated,
-  crop aspect mismatch), field-level metadata merge planning (date provenance
-  priority, GPS with camera-EXIF preference, description/title/keyword
-  unions), review locking, and `reports/cluster_audit_sample.csv`.
-- `archive materialize` (M7, Stage 6): dry-run by default (INV-4) with full
-  manifests and zero writes; the keyword-map workflow
-  (`reports/keyword_map.csv`, keep/rename/drop with hierarchies); on
-  `--execute`: INV-9 space preflight, atomic copy-verify-rename into
-  `archive/YYYY/YYYY-MM/<stem>__<sha8><ext>`, metadata written through
-  exiftool in one batch per file (resolved dates, GPS, description,
-  XMP-dc:Subject keywords, the full XMP-ArchivePipe provenance namespace,
-  Rating=4 + `edited-preferred`/`has-edit` for edited pairs), `.xmp` sidecars
-  with untouched bytes for RAW/video, content-addressed quarantine with a
-  JSONL index (one copy per hash), exclusions with reasons, the `placement`
-  ledger, resumable re-runs, and a post-execute hash sample check.
-- `archive verify` (M8, Stage 7): proves the conservation law (INV-3) on disk —
-  every instance placed exactly once, every archive file re-hashed against its
-  recorded hash, every quarantine file byte-identical to its source, nothing
-  unaccounted on disk; discrepancies enumerated exactly, nonzero exit on any;
-  machine-readable `reports/verify_report.json` with full statistics.
-- `archive report` (M8): human-readable summary — dispositions, date sources
-  and precisions, cluster histogram, decision/review counts, storage totals,
-  Takeout-only videos, last run per stage, last verify result.
-- `archive maintain verify-checksums` (M8): cron-able re-hash of archive and
-  quarantine against the ledger.
-- `archive maintain import --root` (M8): incremental imports through the same
-  ingest → provenance → date-resolve → dedup path; byte-identical newcomers
-  never displace already-archived winners; review, then materialize as usual.
-- `archive maintain purge-quarantine` (M8): manual destruction of quarantined
-  losers, gated on a *passing* verify and a typed confirmation phrase; writes
-  a purge marker so later verifies report the purge instead of failing.
-  Recommended no sooner than 6 months after verify passes with backups in place.
+---
 
-## Setup
+## Prerequisites
 
-Requires Python 3.12+, [Poetry](https://python-poetry.org), and `exiftool`
-(`brew install exiftool`). Later milestones also need `ffmpeg`.
+- **macOS**, Python 3.12+, [Poetry](https://python-poetry.org)
+- `brew install exiftool ffmpeg` (ffmpeg is needed to fingerprint videos —
+  install it **before** ingesting if you have any)
+- A **working-tree location on an APFS volume** with room for roughly **2× your
+  collection** (it holds the archive *and* a quarantine copy of everything until
+  you purge). It can be your internal SSD or an external APFS drive — but **not**
+  the same drive as your backup.
 
-```
+```bash
+git clone <this repo> && cd photo-archive-pipeline
 poetry install
-poetry run pytest
 ```
 
-## Demo (M3)
+---
 
-```
-poetry run archive --working-tree /tmp/archive-demo init
-# ... make your Stage 0 backup, then set preserve.confirmed = true in config.toml ...
-poetry run archive fixtures generate --dest /tmp/archive-fixtures --seed 42
-poetry run archive --working-tree /tmp/archive-demo ingest --source LOCAL --root /tmp/archive-fixtures/LOCAL
-poetry run archive --working-tree /tmp/archive-demo ingest --source TAKEOUT --root /tmp/archive-fixtures/TAKEOUT --export-id t2015
-poetry run archive --working-tree /tmp/archive-demo takeout-normalize
-poetry run archive --working-tree /tmp/archive-demo local-provenance
-# ... review /tmp/archive-demo/reports/local_provenance.csv, set overrides ...
-poetry run archive --working-tree /tmp/archive-demo date-resolve
-poetry run archive --working-tree /tmp/archive-demo dedup
-poetry run archive --working-tree /tmp/archive-demo review serve   # http://127.0.0.1:8765
-poetry run archive --working-tree /tmp/archive-demo materialize    # dry-run
-# ... review manifests + keyword_map.csv ...
-poetry run archive --working-tree /tmp/archive-demo materialize --execute
-poetry run archive --working-tree /tmp/archive-demo verify
-poetry run archive --working-tree /tmp/archive-demo report
+## One-time shell setup
+
+Point the tool at your working tree once, so every command stays short:
+
+```bash
+cd /path/to/photo-archive-pipeline
+export ARCHIVE_WORKING_TREE=/path/to/archive-project   # the pipeline-owned dir
+alias archive="poetry run archive"                     # convenience for this shell
 ```
 
-## After the pipeline: browsing and backups
+Every `archive …` command below is shorthand for `poetry run archive …`, and
+each one operates on `ARCHIVE_WORKING_TREE`. (You can instead pass
+`--working-tree /path/...` to any command.)
 
-- **Photo manager**: point digiKam (database on the internal SSD) read-mostly at
-  `archive/`. It reads the embedded XMP keywords (`XMP-dc:Subject`) as tags and
-  the `Rating=4` on edited-preferred versions; its Similarity search doubles as
-  an independent second-pass audit of the pipeline's dedup. The archive tree
-  stays the source of truth — the manager is a view. (immich remains an option
-  later; nothing in the archive layout would change.)
-- **Backups**: keep 3-2-1 copies of `archive/` + `catalog.db` + `reports/`
-  (e.g. restic or borg to a second disk and one offsite target). Schedule
-  `archive maintain verify-checksums` periodically (cron/launchd).
-- **Purging quarantine**: only after `archive verify` passes, backups exist,
-  and at least ~6 months have gone by: `archive maintain purge-quarantine`.
+---
 
-Ingest refuses to run until the Stage 0 preserve gate (`preserve.confirmed` in
-`config.toml`) is set to `true` by you, after a verbatim backup of all sources
-exists on a separate physical disk. A `--root` pointing at a Takeout `.zip` is
-staged (extracted once, space-checked) into the working tree automatically.
-Re-running an ingest is a no-op; every run ends with a random-sample hash
-verification.
+## The workflow — what to run, in order
+
+Run these stages top to bottom. Each stage is **re-runnable**: running a
+completed stage again with no new input does nothing, and re-runs **preserve any
+review decisions** you've made. Stages that need your judgment are marked
+**⟳ review**.
+
+### 1 · Initialize the working tree
+
+```bash
+archive init
+```
+
+Creates `catalog.db`, `config.toml`, and empty `archive/ quarantine/ reports/
+logs/`. Safe to run anytime.
+
+### 2 · Back up your sources, then open the gate — **required, once**
+
+Make a verbatim backup of every source on a **separate physical disk** (Time
+Machine counts, as long as it isn't *excluding* your photos). Then edit
+`config.toml` and set:
+
+```toml
+[preserve]
+confirmed = true
+```
+
+`ingest` refuses to run until you do. The pipeline never touches your sources —
+this backup is your insurance if a drive dies mid-run.
+
+### 3 · Ingest your sources
+
+```bash
+# your local photo tree:
+caffeinate -i archive ingest --source LOCAL --root /path/to/photos
+
+# each Google Takeout export is a SEPARATE source (a .zip or an extracted folder):
+caffeinate -i archive ingest --source TAKEOUT --root /path/to/takeout.zip --export-id 2024
+```
+
+Catalogs every file (SHA-256, EXIF, perceptual hash, video signature). This is
+the **long** stage — expect an overnight run for a large library. It's
+resumable: if it's interrupted, run the same command again and it continues.
+`caffeinate -i` keeps the Mac awake; sources stay read-only throughout.
+
+### 4 · Normalize Takeout sidecars — *only if you ingested a TAKEOUT source*
+
+```bash
+archive takeout-normalize
+```
+
+Matches Google's `.json` sidecars to their photos. **Skip this if you only have
+LOCAL sources.** (Old Takeout content that's already merged *inside* your local
+tree is handled by the next step, not here.)
+
+### 5 · Classify your local folders — **⟳ review**
+
+```bash
+archive local-provenance
+```
+
+Decides which LOCAL folders are your own curation versus old Google dumps (which
+shouldn't inherit your careful dating).
+
+→ **Then:** open `reports/local_provenance.csv`. If a folder is misclassified,
+add its path prefix under `[provenance]` in `config.toml`
+(`curated_overrides` or `takeout_derived_overrides`) and re-run this step.
+
+### 6 · Resolve capture dates — **⟳ review**
+
+```bash
+archive date-resolve
+```
+
+Assigns each photo a date using the trust hierarchy (your dated folders outrank
+EXIF, which outranks Google's dates). Prints how many resolved automatically vs.
+need review, and writes `reports/date_audit_sample.csv` to spot-check.
+
+→ **Then:** clear the conflicts in the review UI (step 8). This is optional —
+anything you leave unresolved is filed under `archive/undated/`, recoverable, not
+lost.
+
+### 7 · Find duplicates
+
+```bash
+archive dedup
+```
+
+Groups exact and near-duplicates, picks the best copy of each, and marks the
+rest for quarantine. Uncertain cases queue for review.
+
+→ **Then:** review the duplicate clusters in the UI (step 8). This review **is
+required** — `materialize` won't run while any cluster is still pending.
+
+### 8 · Review — the human UI (date conflicts + duplicate clusters)
+
+```bash
+archive review serve          # then open http://127.0.0.1:8765
+```
+
+Run this in its own terminal (it's a local web server, 127.0.0.1 only). Work the
+**Date conflicts** queue (each folder group shows its candidate dates with batch
+"apply folder date" / "trust EXIF" buttons) and the **Duplicate clusters** queue
+(accept / swap winner / split / not-a-duplicate). Every action is saved and
+survives re-running `date-resolve` or `dedup`. Stop and restart anytime.
+
+### 9 · Preview the archive — dry run, **⟳ review**
+
+```bash
+archive materialize            # writes NOTHING
+```
+
+Produces `reports/archive_manifest.csv`, `quarantine_manifest.csv`, and
+`keyword_map.csv`, and prints the **exact disk space** the real run will need.
+
+→ **Then:** edit `reports/keyword_map.csv` to choose how topical folder names
+become keywords (`keep` / `rename` / `drop`), and skim the manifests to confirm
+where things will land.
+
+### 10 · Build the archive — the only step that writes files
+
+```bash
+archive materialize --execute
+```
+
+Copies each winner into `archive/`, writes its metadata via exiftool, and copies
+losers to `quarantine/`. Space-checked before it starts; resumable if
+interrupted. Your sources are still never touched.
+
+### 11 · Prove nothing was lost
+
+```bash
+archive verify                 # conservation law + checksums; fails loudly on any gap
+archive report                 # human-readable summary of the whole archive
+```
+
+`verify` exits non-zero and enumerates the exact discrepancies if anything is
+missing, altered, or unaccounted for.
+
+---
+
+## The rules that keep you safe
+
+- **Sources are read-only** and never modified — metadata is written only to
+  copies inside the working tree.
+- **Nothing is deleted.** Duplicates and rejects sit in `quarantine/` until you
+  purge them by hand, much later.
+- **`materialize` is a dry run by default** — only `--execute` writes files, and
+  it space-checks first.
+- **Every stage is resumable and re-runnable**, and re-runs preserve your review
+  decisions.
+- **Everything is under the working tree.** `archive/` is a normal folder tree
+  you can copy elsewhere (e.g. to your laptop) once `verify` passes.
+
+## After you have an archive
+
+- **Browse it:** point [digiKam](https://www.digikam.org) (its database on your
+  internal SSD) read-mostly at `archive/`. It reads the embedded XMP keywords as
+  tags and the `Rating=4` on preferred edits, and its duplicate finder is an
+  independent second audit of the dedup.
+- **Back it up:** keep 3-2-1 copies of `archive/` + `catalog.db` + `reports/`
+  (e.g. restic/borg). Re-check integrity periodically:
+  ```bash
+  archive maintain verify-checksums
+  ```
+- **Add new photos later:**
+  ```bash
+  archive maintain import --root /path/to/new-photos
+  ```
+  then review and `materialize` as usual. Byte-identical newcomers never displace
+  what's already archived.
+- **Reclaim quarantine space — carefully, much later:** only after `verify`
+  passes, backups exist, and you've lived with the archive for ~6 months:
+  ```bash
+  archive maintain purge-quarantine     # asks you to type a confirmation phrase
+  ```
+
+## Working-tree layout
+
+```
+archive-project/
+  catalog.db        single source of truth (SQLite)
+  config.toml       all your settings and overrides
+  archive/          the canonical output: YYYY/YYYY-MM/<name>__<hash>.<ext>
+  quarantine/       losers, kept byte-identical, until you purge
+  reports/          manifests, audit samples, verify report (CSV/JSON)
+  logs/             structured run logs (JSONL)
+  staging/          extracted Takeout zips (pipeline-owned)
+```
+
+## Development
+
+```bash
+poetry run pytest          # test suite
+poetry run ruff check src tests
+poetry run mypy
+poetry run archive fixtures generate --dest /tmp/corpus   # synthetic test corpus
+```
