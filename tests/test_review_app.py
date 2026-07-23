@@ -3,6 +3,7 @@
 import logging
 import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,8 @@ from fastapi.testclient import TestClient
 
 from archive_pipeline.dates import resolve_dates
 from archive_pipeline.provenance import classify_local
-from archive_pipeline.review.app import create_app
+from archive_pipeline.review.app import _placeholder_jpeg, create_app
+from archive_pipeline.video import ffmpeg_available
 
 pytestmark = pytest.mark.skipif(
     shutil.which("exiftool") is None, reason="exiftool not installed"
@@ -155,6 +157,34 @@ def test_conflict_items_label_video_and_corrupt(
             (cur.lastrowid,),
         )
     assert "video" in client.get("/dates").text
+
+
+def test_video_thumbnail_extracted(env: PipelineEnv, client: TestClient) -> None:
+    if not ffmpeg_available():
+        pytest.skip("ffmpeg not installed")
+    root = Path(
+        env.conn.execute("SELECT root FROM source_root WHERE source = 'LOCAL'")
+        .fetchone()[0]
+    )
+    clip = root / "clips" / "v.mp4"
+    clip.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi",
+         "-i", "testsrc=duration=2:size=160x120:rate=10", "-pix_fmt", "yuv420p",
+         str(clip)],
+        check=True, capture_output=True,
+    )
+    with env.conn:
+        cur = env.conn.execute(
+            "INSERT INTO instance (source, rel_path, size_bytes, sha256, kind,"
+            " ingest_run_id) VALUES ('LOCAL', 'clips/v.mp4', ?, ?, 'video', 1)",
+            (clip.stat().st_size, "cd" * 32),
+        )
+    resp = client.get(f"/thumb/{cur.lastrowid}")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+    # A real extracted frame, not the tiny gray placeholder.
+    assert len(resp.content) > len(_placeholder_jpeg())
 
 
 def test_pre_2000_bucket_via_form(env: PipelineEnv, client: TestClient) -> None:

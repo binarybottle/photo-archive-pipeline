@@ -103,6 +103,42 @@ def _keyframe_phash(path: Path, at_s: float) -> str | None:
         return None
 
 
+def extract_frame(path: Path, at_s: float = 1.0) -> Image.Image | None:
+    """Grab one representative frame as a PIL image (for review thumbnails).
+
+    Seeks ``at_s`` seconds in (avoiding a black intro frame) and falls back to
+    the first frame for very short clips. Returns None if ffmpeg is missing or
+    the video is unreadable.
+
+    Usage:
+        >>> frame = extract_frame(Path("clip.mp4"))  # doctest: +SKIP
+        >>> frame.size  # doctest: +SKIP
+        (1920, 1080)
+    """
+    if not ffmpeg_available():
+        return None
+    for seek in (at_s, 0.0):
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-v", "error", "-ss", f"{seek:.3f}", "-i", str(path),
+                    "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-",
+                ],
+                capture_output=True,
+                timeout=_SUBPROCESS_TIMEOUT_S,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode == 0 and result.stdout:
+            try:
+                frame = Image.open(io.BytesIO(result.stdout))
+                frame.load()
+                return frame
+            except Exception:
+                return None
+    return None
+
+
 def video_signature(path: Path) -> VideoFacts:
     """Compute stream facts and the keyframe signature for one video.
 

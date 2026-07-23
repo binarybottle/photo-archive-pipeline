@@ -29,6 +29,7 @@ from PIL import Image, ImageOps
 
 from archive_pipeline.catalog import open_catalog
 from archive_pipeline.review import actions
+from archive_pipeline.video import extract_frame
 from archive_pipeline.workingtree import WorkingTree
 
 pillow_heif.register_heif_opener()
@@ -383,18 +384,33 @@ def create_app(wt: WorkingTree) -> FastAPI:
             raise HTTPException(404, "no such instance")
         roots = _source_roots(conn)
         source_path = roots.get(row["source"], Path("/nonexistent")) / row["rel_path"]
-        if row["kind"] != "image" or not source_path.is_file():
+        preview = _load_preview(source_path, row["kind"])
+        if preview is None:
             return Response(_placeholder_jpeg(), media_type="image/jpeg")
-        try:
-            with Image.open(source_path) as img:
-                oriented = ImageOps.exif_transpose(img)
-                oriented.thumbnail((_THUMB_EDGE, _THUMB_EDGE))
-                buf = io.BytesIO()
-                oriented.convert("RGB").save(buf, format="JPEG", quality=82)
-        except Exception:
-            return Response(_placeholder_jpeg(), media_type="image/jpeg")
+        preview.thumbnail((_THUMB_EDGE, _THUMB_EDGE))
+        buf = io.BytesIO()
+        preview.save(buf, format="JPEG", quality=82)
         thumbs_dir.mkdir(parents=True, exist_ok=True)
         cached.write_bytes(buf.getvalue())
         return Response(buf.getvalue(), media_type="image/jpeg")
 
     return app
+
+
+def _load_preview(source_path: Path, kind: str) -> Image.Image | None:
+    """A display-ready RGB preview of an image or video, or None if unavailable.
+
+    Images are EXIF-orientation-corrected; videos yield an extracted frame.
+    """
+    if not source_path.is_file():
+        return None
+    if kind == "image":
+        try:
+            with Image.open(source_path) as img:
+                return ImageOps.exif_transpose(img).convert("RGB")
+        except Exception:
+            return None
+    if kind == "video":
+        frame = extract_frame(source_path)
+        return frame.convert("RGB") if frame is not None else None
+    return None
