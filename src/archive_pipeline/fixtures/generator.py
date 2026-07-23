@@ -55,6 +55,10 @@ _EXIF_PLAN: tuple[tuple[str, dict[str, str]], ...] = (
     ("LOCAL/scans/scan003.png", {"XMP:CreateDate": "2019:11:03 10:00:00"}),
     ("TAKEOUT/Google Photos/Photos from 2015/IMG_2015_001.jpg",
      {"DateTimeOriginal": "2015:04:18 09:30:00", "Make": "Google", "Model": "Nexus 5"}),
+    # Google-edited version: re-encoded by Google, so maker notes gone and a
+    # Google Software tag stamped (google_recompressed heuristic material).
+    ("TAKEOUT/Google Photos/Photos from 2015/IMG_2015_003-edited.jpg",
+     {"Software": "Google Photos 1.2"}),
 )
 
 #: JPEGs generated with distinct random pixel content (beyond the EXIF plan).
@@ -65,7 +69,6 @@ _PLAIN_JPEGS: tuple[str, ...] = (
     "TAKEOUT/Google Photos/Photos from 2015/IMG_2015_002.jpg",
     "TAKEOUT/Google Photos/Photos from 2015/IMG_2015_002(1).jpg",
     "TAKEOUT/Google Photos/Photos from 2015/IMG_2015_003.jpg",
-    "TAKEOUT/Google Photos/Photos from 2015/IMG_2015_003-edited.jpg",
 )
 
 #: (source relpath, destination relpath) byte-identical copies -> exact-dup clusters.

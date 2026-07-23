@@ -106,10 +106,20 @@ def test_edited_original_names() -> None:
 
 
 def test_recompression_heuristic() -> None:
-    assert is_google_recompressed({}, "image/jpeg") is True
-    assert is_google_recompressed({"EXIF:Software": "Google"}, "image/jpeg") is True
+    # A positive Google-processing signal flags; absence of camera EXIF does not.
+    assert is_google_recompressed({"EXIF:Software": "Google Photos"}, "image/jpeg") is True
+    # A camera photo re-encoded by Google (Make/Model present, maker notes
+    # stripped, Google Software tag) is still flagged.
+    assert is_google_recompressed(
+        {"EXIF:Make": "Canon", "EXIF:Software": "Google Photos"}, "image/jpeg"
+    ) is True
+    # Old low-res / no-EXIF files are NOT flagged (the removed false-positive path).
+    assert is_google_recompressed({}, "image/jpeg") is False
     assert is_google_recompressed({"EXIF:Make": "Canon"}, "image/jpeg") is False
-    assert is_google_recompressed({"MakerNotes:Quality": "fine"}, "image/jpeg") is False
+    # Maker notes intact => camera original, never flagged even with a Google tag.
+    assert is_google_recompressed(
+        {"MakerNotes:Quality": "fine", "EXIF:Software": "Google"}, "image/jpeg"
+    ) is False
     assert is_google_recompressed({}, "image/png") is False
 
 
@@ -208,15 +218,17 @@ def test_integration_matches_all_pathologies(
     assert album["album"] == "Vacation 2015"
     assert album["rel_path"].endswith("Vacation 2015/IMG_2015_001.jpg")
 
-    # Recompression: plain no-EXIF Takeout JPEGs are flagged; the one with a
-    # camera Make is not.
+    # Recompression: only files with a positive Google Software signal are
+    # flagged (the re-encoded -edited version); plain no-EXIF JPEGs and camera
+    # originals are not.
     flagged = {
         row["rel_path"]
         for row in conn.execute(
             "SELECT rel_path FROM instance WHERE google_recompressed = 1"
         )
     }
-    assert any(r.endswith("IMG_2015_002.jpg") for r in flagged)
+    assert any(r.endswith("IMG_2015_003-edited.jpg") for r in flagged)
+    assert not any(r.endswith("IMG_2015_002.jpg") for r in flagged)
     assert not any(r.endswith("IMG_2015_001.jpg") for r in flagged)
 
     report = (wt.reports_dir / "takeout_unmatched.csv").read_text(encoding="utf-8")

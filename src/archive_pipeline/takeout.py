@@ -158,25 +158,29 @@ def edited_original(media_name: str) -> str | None:
 
 
 def is_google_recompressed(exif: dict[str, Any], mime: str | None) -> bool:
-    """Heuristic for Google "Storage saver" recompression (edge case 6).
+    """Heuristic for Google recompression / re-encoding (edge case 6).
 
-    A camera-original JPEG carries maker notes and Make/Model; Google's
-    recompression strips them (and sometimes stamps its own Software tag).
+    Requires a *positive* Google-processing signal: a JPEG with maker notes
+    stripped and a Google ``Software`` tag (e.g. Google Photos edits, which are
+    re-encoded). Mere absence of camera Make/Model is deliberately NOT used —
+    old low-resolution phone photos, scans, screenshots, and app exports
+    legitimately lack it without having been recompressed, so that fallback
+    produced large numbers of false positives on Original-quality libraries.
     This is a scoring penalty and review signal, never a hard decision.
 
     Usage:
+        >>> is_google_recompressed({"EXIF:Software": "Google Photos"}, "image/jpeg")
+        True
+        >>> is_google_recompressed({}, "image/jpeg")
+        False
         >>> is_google_recompressed({"EXIF:Make": "Canon"}, "image/jpeg")
         False
-        >>> is_google_recompressed({}, "image/jpeg")
-        True
     """
     if mime != "image/jpeg":
         return False
     if any(key.startswith("MakerNotes") for key in exif):
         return False
-    if "google" in str(exif.get("EXIF:Software", "")).lower():
-        return True
-    return not (exif.get("EXIF:Make") or exif.get("EXIF:Model"))
+    return "google" in str(exif.get("EXIF:Software", "")).lower()
 
 
 @dataclass(frozen=True)
