@@ -56,6 +56,12 @@ DEFAULT_FILENAME_DATE_PATTERNS: tuple[str, ...] = (
     r"^(?P<year>(19|20)\d{2})(?P<month>\d{2})(?P<day>\d{2})"
     r"[-_ ](?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})",
     r"^IMG-(?P<year>(19|20)\d{2})(?P<month>\d{2})(?P<day>\d{2})-WA",
+    # A hyphenated YYYY-MM with an optional -DD and time (month, day, or second
+    # precision): "2001-09_Palisades", "2016-08-16", "2016-08-16 22.20.21.jpg".
+    r"(?<![\d])(?P<year>(19|20)\d{2})-(?P<month>0[1-9]|1[0-2])"
+    r"(?:-(?P<day>0[1-9]|[12]\d|3[01])"
+    r"(?:[ _T](?P<hour>[01]\d|2[0-3])[.:_-](?P<minute>[0-5]\d)"
+    r"[.:_-](?P<second>[0-5]\d))?)?(?![\d])",
     # A validated YYYYMMDD embedded anywhere in the name (day precision), with
     # non-digit boundaries so long serial numbers are not mistaken for dates:
     # "..._20070408_PD.jpg", "20030916_ultrasound.jpg", "IMG00063-20101121-...".

@@ -94,6 +94,23 @@ def test_filename_candidate_embedded_date() -> None:
     assert filename_candidate("x/12345678.jpg", p) is None          # year 1234
 
 
+def test_filename_candidate_hyphenated_date() -> None:
+    p = DEFAULT_FILENAME_DATE_PATTERNS
+    assert filename_candidate("x/2016-08-16 22.20.21.jpg", p) == (
+        "2016-08-16T22:20:21", "second"
+    )
+    assert filename_candidate("x/2016-08-16.jpg", p) == ("2016-08-16", "day")
+    assert filename_candidate("x/2016-08-16_note.jpg", p) == ("2016-08-16", "day")
+    assert filename_candidate("x/2016-08-16T09-05-00_edit.jpg", p) == (
+        "2016-08-16T09:05:00", "second"
+    )
+    # Hyphenated year-month (no day) resolves at month precision.
+    assert filename_candidate("x/2001-09_Palisades-NJ_b.JPG", p) == (
+        "2001-09-01", "month"
+    )
+    assert filename_candidate("x/2016-13-01.jpg", p) is None  # month 13
+
+
 def test_filename_candidate_year_month() -> None:
     p = DEFAULT_FILENAME_DATE_PATTERNS
     assert filename_candidate("x/200804_SanFrancisco_DSCN0200.JPG", p) == (
