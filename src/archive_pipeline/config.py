@@ -43,6 +43,9 @@ DEFAULT_FOLDER_DATE_PATTERNS: tuple[str, ...] = (
     # dates: "card-telling_20060624", "trip_20060624_final".
     r"(?<![\d])(?P<year>(19|20)\d{2})(?P<month>0[1-9]|1[0-2])"
     r"(?P<day>0[1-9]|[12]\d|3[01])(?![\d])",
+    # A validated YYYYMM embedded in a folder component (month precision), after
+    # the day form so full dates win: "200804_SanFrancisco".
+    r"(?<![\d])(?P<year>(19|20)\d{2})(?P<month>0[1-9]|1[0-2])(?![\d])",
 )
 
 #: Filename date patterns (spec Stage 3): IMG_/VID_/PXL_ camera names, bare
@@ -58,6 +61,9 @@ DEFAULT_FILENAME_DATE_PATTERNS: tuple[str, ...] = (
     # "..._20070408_PD.jpg", "20030916_ultrasound.jpg", "IMG00063-20101121-...".
     r"(?<![\d])(?P<year>(19|20)\d{2})(?P<month>0[1-9]|1[0-2])"
     r"(?P<day>0[1-9]|[12]\d|3[01])(?![\d])",
+    # A validated YYYYMM embedded in the name (month precision), tried after the
+    # day form above so a full date wins: "200804_SanFrancisco_...".
+    r"(?<![\d])(?P<year>(19|20)\d{2})(?P<month>0[1-9]|1[0-2])(?![\d])",
 )
 
 

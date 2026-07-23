@@ -152,8 +152,10 @@ def filename_candidate(
             continue
         g = match.groupdict()
         year, month, day = g.get("year"), g.get("month"), g.get("day")
-        if not year or not month or not day or not _valid_date(year, month, day):
+        if not year or not month or not _valid_date(year, month, day):
             continue
+        if not day:
+            return f"{year}-{month}-01", "month"
         if g.get("hour") is not None:
             hour, minute, second = g["hour"], g.get("minute", "00"), g.get("second", "00")
             if int(hour) < 24 and int(minute) < 60 and int(second) < 60:

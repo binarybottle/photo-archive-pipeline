@@ -59,6 +59,8 @@ def test_folder_candidate_embedded_yyyymmdd() -> None:
     assert folder_candidate("2010/event_20100715/a.jpg", p) == ("2010-07-15", "day")
     # An explicit YYYY-MM-DD folder still resolves via its own pattern, not this.
     assert folder_candidate("2010-06-15/a.jpg", p) == ("2010-06-15", "day")
+    # A YYYYMM folder name resolves at month precision.
+    assert folder_candidate("200804_SanFrancisco/a.jpg", p) == ("2008-04-01", "month")
     # No false positives on ranges or non-date digit runs.
     assert folder_candidate("2004-2009/a.jpg", p) is None
     assert folder_candidate("batch_00012345/a.jpg", p) is None  # year 0001
@@ -87,10 +89,21 @@ def test_filename_candidate_embedded_date() -> None:
     assert filename_candidate("x/20030916_ultrasound.jpg", p) == ("2003-09-16", "day")
     assert filename_candidate("x/IMG00063-20101121-1633.jpg", p) == ("2010-11-21", "day")
     # No false positives: sub-date numbers, invalid months/days, long digit runs.
-    assert filename_candidate("x/200704_note.jpg", p) is None       # only 6 digits
     assert filename_candidate("x/20991340.jpg", p) is None          # month 13, day 40
     assert filename_candidate("x/serial_120070408.jpg", p) is None  # 9-digit run
     assert filename_candidate("x/12345678.jpg", p) is None          # year 1234
+
+
+def test_filename_candidate_year_month() -> None:
+    p = DEFAULT_FILENAME_DATE_PATTERNS
+    assert filename_candidate("x/200804_SanFrancisco_DSCN0200.JPG", p) == (
+        "2008-04-01", "month"
+    )
+    # A full YYYYMMDD still wins over the shorter YYYYMM form.
+    assert filename_candidate("x/20080415_trip.jpg", p) == ("2008-04-15", "day")
+    # Guards: invalid month, and 6 digits inside a longer run are not months.
+    assert filename_candidate("x/209913_x.jpg", p) is None           # month 13
+    assert filename_candidate("x/id_2008041.jpg", p) is None         # 7-digit run
 
 
 def test_exif_candidate_fallback_to_createdate() -> None:
