@@ -267,6 +267,21 @@ def test_sources_untouched_by_materialize(env: PipelineEnv) -> None:
             assert "Subject" not in json.dumps(tags)  # no keywords leaked back
 
 
+def test_metadata_args_skips_incomplete_gps() -> None:
+    """An orphan coordinate (lat without lon) yields no GPS tags, not a crash."""
+    from archive_pipeline.materialize import PlanItem, _metadata_args
+
+    base = dict(
+        instance_id=1, source="LOCAL", rel_path="a.jpg", sha256="ff" * 32,
+        size_bytes=1, mime="image/jpeg", disposition="archive", reason="single",
+    )
+    half = _metadata_args(PlanItem(**base, gps=(47.82, None)))  # type: ignore[arg-type]
+    assert not any("GPS" in a for a in half)
+    full = _metadata_args(PlanItem(**base, gps=(47.82, -122.3)))
+    assert any(a.startswith("-GPSLatitude=") for a in full)
+    assert any(a.startswith("-GPSLongitude=") for a in full)
+
+
 def test_exiftool_write_converts_execute_error() -> None:
     """A non-zero exiftool exit (ExifToolExecuteError) becomes MaterializeError.
 

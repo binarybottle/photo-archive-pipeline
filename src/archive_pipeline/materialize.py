@@ -395,12 +395,14 @@ def build_plan(
 
         gps: tuple[float, float] | None = None
         gps_flagged = False
-        if merge and merge["gps"]["lat"] is not None:
+        if merge and _complete_gps(merge["gps"]["lat"], merge["gps"]["lon"]):
             gps = (merge["gps"]["lat"], merge["gps"]["lon"])
             gps_flagged = merge["gps"]["source"] == "takeout"
-        elif row["gps_lat"] is not None:
+        elif _complete_gps(row["gps_lat"], row["gps_lon"]):
             gps = (row["gps_lat"], row["gps_lon"])
-        elif iid in sidecars and sidecars[iid]["gps_lat"] is not None:
+        elif iid in sidecars and _complete_gps(
+            sidecars[iid]["gps_lat"], sidecars[iid]["gps_lon"]
+        ):
             gps = (sidecars[iid]["gps_lat"], sidecars[iid]["gps_lon"])
             gps_flagged = True
 
@@ -508,6 +510,15 @@ def _copy_verified(src: Path, dest: Path, expected_sha: str) -> Path:
     return temp
 
 
+def _complete_gps(lat: float | None, lon: float | None) -> bool:
+    """A coordinate is only usable when both halves are present.
+
+    Some sources carry a latitude with a null longitude (or vice versa); an
+    orphan coordinate is meaningless, so such records get no GPS metadata.
+    """
+    return lat is not None and lon is not None
+
+
 def _metadata_args(item: PlanItem) -> list[str]:
     """The exiftool assignments for one archived item (one batch per file)."""
     args: list[str] = []
@@ -518,7 +529,7 @@ def _metadata_args(item: PlanItem) -> list[str]:
             f"-CreateDate={stamp}",
             f"-ModifyDate={stamp}",
         ]
-    if item.gps is not None:
+    if item.gps is not None and _complete_gps(*item.gps):
         lat, lon = item.gps
         args += [
             f"-GPSLatitude={abs(lat)}",
