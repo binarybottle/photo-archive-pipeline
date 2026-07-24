@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from exiftool import ExifToolHelper
+from exiftool.exceptions import ExifToolExecuteError
 
 from archive_pipeline import __version__
 from archive_pipeline.config import Config
@@ -241,6 +242,8 @@ class MaterializeSummary:
     quarantine_copies: int = 0  # distinct hashes physically copied
     excluded: int = 0
     sidecars_written: int = 0
+    write_fallbacks: int = 0  # in-place metadata write failed -> sidecar (INV-7)
+    metadata_skipped: int = 0  # neither in-place nor sidecar took; bytes kept
     undated: int = 0
     skipped_done: int = 0
     bytes_planned: int = 0
@@ -543,15 +546,66 @@ def _metadata_args(item: PlanItem) -> list[str]:
 
 
 def _exiftool_write(et: ExifToolHelper, args: list[str], target: Path) -> None:
-    output = et.execute("-overwrite_original", *args, str(target))
+    try:
+        output = et.execute("-overwrite_original", *args, str(target))
+    except ExifToolExecuteError as exc:
+        raise MaterializeError(
+            f"exiftool write failed for {target}: {(exc.stderr or '').strip()}"
+        ) from exc
     if "1 image files updated" not in output and "1 files updated" not in output:
         raise MaterializeError(f"exiftool write failed for {target}: {output.strip()}")
+
+
+def _write_fallback_sidecar(
+    et: ExifToolHelper,
+    args: list[str],
+    src: Path,
+    dest: Path,
+    item: PlanItem,
+    summary: MaterializeSummary,
+    log: Logger,
+    cause: Exception,
+) -> str:
+    """Recover from a failed in-place metadata write (INV-7).
+
+    Some source files carry a damaged metadata block (e.g. a truncated EXIF
+    IFD) that exiftool can read but refuses to rewrite. Rather than abort the
+    run, keep the image bytes bit-identical and record the metadata in an XMP
+    sidecar instead — exactly the sidecar path used for risky formats. If even
+    the sidecar cannot be written, place the untouched bytes and skip metadata
+    so the file is never lost. Returns the destination SHA (the source SHA,
+    since the bytes are unchanged).
+    """
+    temp = _copy_verified(src, dest, item.sha256)  # fresh, re-hashed copy
+    os.replace(temp, dest)
+    item.use_sidecar = True
+    summary.write_fallbacks += 1
+    subject = f"{item.source}:{item.rel_path}"
+    try:
+        _exiftool_sidecar(et, args, dest)
+        summary.sidecars_written += 1
+        log.warning(
+            "in-place metadata write failed; wrote XMP sidecar, image bytes kept",
+            extra={"source": subject, "error": str(cause)},
+        )
+    except MaterializeError as sidecar_error:
+        summary.metadata_skipped += 1
+        log.error(
+            "metadata write and sidecar both failed; kept image bytes only",
+            extra={"source": subject, "error": str(sidecar_error)},
+        )
+    return item.sha256
 
 
 def _exiftool_sidecar(et: ExifToolHelper, args: list[str], media: Path) -> Path:
     sidecar = media.with_suffix(media.suffix + ".xmp")
     sidecar.unlink(missing_ok=True)
-    output = et.execute("-o", str(sidecar), *args, str(media))
+    try:
+        output = et.execute("-o", str(sidecar), *args, str(media))
+    except ExifToolExecuteError as exc:
+        raise MaterializeError(
+            f"exiftool sidecar write failed for {media}: {(exc.stderr or '').strip()}"
+        ) from exc
     if not sidecar.exists():
         raise MaterializeError(
             f"exiftool sidecar write failed for {media}: {output.strip()}"
@@ -712,9 +766,14 @@ def run_materialize(
                         summary.sidecars_written += 1
                         dest_sha = item.sha256  # bytes untouched
                     else:
-                        _exiftool_write(et, args, temp)
-                        dest_sha = _sha256_file(temp)
-                        os.replace(temp, dest)
+                        try:
+                            _exiftool_write(et, args, temp)
+                            dest_sha = _sha256_file(temp)
+                            os.replace(temp, dest)
+                        except MaterializeError as exc:
+                            dest_sha = _write_fallback_sidecar(
+                                et, args, src, dest, item, summary, log, exc
+                            )
                     dest_shas[item.instance_id] = dest_sha
                     _record_placement(conn, item, dest_sha, now)
                 else:  # quarantine: byte-identical, once per hash

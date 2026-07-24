@@ -423,6 +423,14 @@ def materialize(
         f"Bytes to copy: {summary.bytes_planned:,}; already done (skipped):"
         f" {summary.skipped_done}."
     )
+    if summary.write_fallbacks:
+        typer.secho(
+            f"{summary.write_fallbacks} file(s) had a damaged metadata block —"
+            " image bytes kept bit-identical, metadata written to an XMP sidecar"
+            f" instead ({summary.metadata_skipped} could not take a sidecar either"
+            " and were placed without metadata). See logs for the file list.",
+            fg=typer.colors.YELLOW,
+        )
     if summary.keyword_map_created:
         typer.secho(
             f"Wrote default keyword map: {wt.reports_dir / KEYWORD_MAP} — review it"

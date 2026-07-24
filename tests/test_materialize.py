@@ -267,6 +267,72 @@ def test_sources_untouched_by_materialize(env: PipelineEnv) -> None:
             assert "Subject" not in json.dumps(tags)  # no keywords leaked back
 
 
+def test_exiftool_write_converts_execute_error() -> None:
+    """A non-zero exiftool exit (ExifToolExecuteError) becomes MaterializeError.
+
+    This is what a damaged metadata block actually raises; the sidecar fallback
+    keys off MaterializeError, so the conversion must happen in the helper.
+    """
+    from exiftool.exceptions import ExifToolExecuteError
+
+    from archive_pipeline.materialize import _exiftool_sidecar, _exiftool_write
+
+    class FakeET:
+        def execute(self, *args: str) -> str:
+            raise ExifToolExecuteError(
+                1, "0 files updated", "Truncated IFD2 directory", list(args)
+            )
+
+    with pytest.raises(MaterializeError, match="Truncated IFD2 directory"):
+        _exiftool_write(FakeET(), ["-DateTimeOriginal=2007:05:03 10:16:14"], Path("x.jpg"))
+    with pytest.raises(MaterializeError, match="Truncated IFD2 directory"):
+        _exiftool_sidecar(FakeET(), ["-DateTimeOriginal=2007:05:03 10:16:14"], Path("x.jpg"))
+
+
+def test_execute_falls_back_to_sidecar_on_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INV-7: a damaged metadata block degrades to a sidecar, never a crash."""
+    import hashlib
+
+    import archive_pipeline.materialize as m
+
+    e = PipelineEnv(tmp_path)
+    classify_local(e.conn, e.cfg, e.wt, LOG)
+    resolve_dates(e.conn, e.cfg, e.wt, LOG)
+    batch_apply(e.conn, "LOCAL", "scans", "exif")
+    run_dedup(e.conn, e.cfg, e.wt, LOG)
+
+    run_materialize(e.conn, e.cfg, e.wt, LOG, execute=False)  # generate keyword map
+
+    def _boom(et: object, args: list[str], target: Path) -> None:
+        raise MaterializeError("Truncated IFD2 directory")
+
+    monkeypatch.setattr(m, "_exiftool_write", _boom)
+
+    summary = run_materialize(e.conn, e.cfg, e.wt, LOG, execute=True)
+
+    assert summary.executed
+    assert summary.write_fallbacks > 0  # every in-place write was forced to fail
+    assert summary.metadata_skipped == 0  # the sidecar still succeeds
+    # Conservation precondition still holds: everything placed.
+    total = e.conn.execute("SELECT COUNT(*) FROM instance").fetchone()[0]
+    placed = e.conn.execute("SELECT COUNT(*) FROM placement").fetchone()[0]
+    assert placed == total
+
+    # A fallen-back archive image: sidecar present, image bytes bit-identical.
+    archived = _snapshot(e.wt.archive_dir)
+    jpg = next(p for p in archived if p.endswith(".jpg"))
+    assert (e.wt.archive_dir / (jpg + ".xmp")).exists()
+    dest_sha = hashlib.sha256((e.wt.archive_dir / jpg).read_bytes()).hexdigest()
+    row = e.conn.execute(
+        "SELECT sha256 FROM placement p JOIN instance i ON i.id = p.instance_id"
+        " WHERE p.dest_rel_path = ?",
+        (jpg,),
+    ).fetchone()
+    assert dest_sha == row["sha256"]
+
+
 def test_execute_refuses_pending_clusters(tmp_path: Path) -> None:
     e = PipelineEnv(tmp_path)
     classify_local(e.conn, e.cfg, e.wt, LOG)
