@@ -5,6 +5,7 @@ from typing import Any
 from archive_pipeline.config import Config
 from archive_pipeline.dedup import (
     Media,
+    _companion_plan,
     _plan_cluster,
     aspect_close,
     content_identifier,
@@ -303,6 +304,31 @@ def test_margin_guardrail_still_flags_non_near_image() -> None:
     b = mk(2, "b/v.mp4", sha256="s2", kind="video")  # identical -> tie
     plan = _plan([a, b], kind="near_video")
     assert "score_margin" in plan.guardrails
+
+
+def test_companion_plan_absorbs_exact_duplicate() -> None:
+    # A Live Photo (image + video) plus a byte-identical standalone copy of the
+    # image saved into another album. The standalone joins the pair as a loser
+    # so its album keyword merges into the winner and it routes to quarantine,
+    # rather than archiving to the identical file's path and colliding.
+    image = mk(1, "LivePhotos/IMG_1.heic", sha256="dup")
+    video = mk(2, "LivePhotos/IMG_1.mov", sha256="vid", kind="video")
+    standalone = mk(3, "Album2/IMG_1.heic", sha256="dup")  # exact dup of the image
+    albums = {1: ["LivePhotos"], 3: ["Vacation2020"]}
+    plan = _companion_plan(
+        (image, video), "pair_live", False, CFG, albums, {}, [standalone]
+    )
+    assert plan.winner.id == 1
+    assert plan.roles == {1: "winner", 2: "companion", 3: "loser"}
+    keywords = plan.merged["keyword_candidates"]
+    assert "LivePhotos" in keywords and "Vacation2020" in keywords
+
+
+def test_companion_plan_without_dups_is_unchanged() -> None:
+    image = mk(1, "LivePhotos/IMG_1.heic", sha256="a")
+    video = mk(2, "LivePhotos/IMG_1.mov", sha256="b", kind="video")
+    plan = _companion_plan((image, video), "pair_live", False, CFG, {}, {})
+    assert plan.roles == {1: "winner", 2: "companion"}
 
 
 def test_margin_guardrail_skipped_for_exact_clusters() -> None:

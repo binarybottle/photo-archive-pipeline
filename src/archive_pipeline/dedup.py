@@ -34,6 +34,7 @@ import posixpath
 import re
 import sqlite3
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from logging import Logger
@@ -712,11 +713,24 @@ def _companion_plan(
     cfg: Config,
     albums: dict[int, list[str]],
     sidecars: dict[int, sqlite3.Row],
+    exact_dups: Sequence[Media] = (),
 ) -> _ClusterPlan:
+    """Plan a RAW+JPEG or Live Photo pair, absorbing any byte-identical copies.
+
+    ``exact_dups`` are standalone instances that share a pair member's SHA-256
+    (e.g. the same photo saved into a second album). They join as losers so
+    their album keywords merge into the winner and they route to quarantine —
+    otherwise each would archive to the identical file's path and collide.
+    """
     first, second = pair
     winner, companion = (second, first) if prefer_second_as_winner else (first, second)
-    plan = _plan_cluster([winner, companion], kind, False, cfg, albums, sidecars)
-    plan.roles = {winner.id: "winner", companion.id: "companion"}
+    plan = _plan_cluster(
+        [winner, companion, *exact_dups], kind, False, cfg, albums, sidecars
+    )
+    plan.roles = {
+        winner.id: "winner", companion.id: "companion",
+        **{m.id: "loser" for m in exact_dups},
+    }
     plan.winner = winner
     plan.guardrails = []
     plan.status = "auto" if not plan.needs_review_merge else "pending"
@@ -762,29 +776,50 @@ def run_dedup(
         )
     }
 
+    all_by_sha: dict[str, list[Media]] = defaultdict(list)
+    for m in pool:
+        all_by_sha[m.sha256].append(m)
+
     plans: list[_ClusterPlan] = []
     companion_ids: set[int] = set()
+    absorbed_ids: set[int] = set()  # exact dups pulled into a pair as losers
+
+    def _exact_dups_of(*members: Media) -> list[Media]:
+        out: dict[int, Media] = {}
+        for pm in members:
+            for d in all_by_sha.get(pm.sha256, []):
+                if d.id not in {m.id for m in members} and d.id not in companion_ids \
+                        and d.id not in absorbed_ids:
+                    out[d.id] = d
+        return sorted(out.values(), key=lambda m: m.id)
+
     for raw, jpeg in pair_raw_jpeg(pool):
         prefer_raw = cfg.policy.raw == "prefer_raw"
+        dups = _exact_dups_of(raw, jpeg)
         plans.append(
             _companion_plan(
-                (raw, jpeg), "pair_raw_jpeg", not prefer_raw, cfg, albums, sidecars
+                (raw, jpeg), "pair_raw_jpeg", not prefer_raw, cfg, albums, sidecars, dups
             )
         )
         companion_ids.update((raw.id, jpeg.id))
+        absorbed_ids.update(d.id for d in dups)
     for image, video in pair_live(
         [m for m in pool if m.id not in companion_ids]
     ):
+        dups = _exact_dups_of(image, video)
         plans.append(
             _companion_plan(
-                (image, video), "pair_live", False, cfg, albums, sidecars
+                (image, video), "pair_live", False, cfg, albums, sidecars, dups
             )
         )
         companion_ids.update((image.id, video.id))
+        absorbed_ids.update(d.id for d in dups)
 
     uf = UnionFind()
     weak_edges: set[int] = set()  # union-find members touched by a weak edge
-    cluster_pool = [m for m in pool if m.id not in companion_ids]
+    cluster_pool = [
+        m for m in pool if m.id not in companion_ids and m.id not in absorbed_ids
+    ]
     by_sha: dict[str, list[Media]] = defaultdict(list)
     for m in cluster_pool:
         by_sha[m.sha256].append(m)
