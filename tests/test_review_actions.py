@@ -102,26 +102,44 @@ def test_accept_missing_candidate_raises(conn: sqlite3.Connection) -> None:
 def test_resolve_manual(conn: sqlite3.Connection) -> None:
     iid = _instance(conn, "scans/s1.png")
     _resolution(conn, iid)
-    resolve_manual(conn, iid, "2001-07-01", "month")
+    resolve_manual(conn, iid, "2001-07-01")
     row = _row(conn, iid)
     assert (row["resolved_date"], row["resolved_source"], row["status"]) == (
         "2001-07-01", "review", "reviewed"
     )
 
 
+@pytest.mark.parametrize(
+    ("entered", "date", "precision"),
+    [
+        ("2000", "2000-01-01", "year"),
+        ("2000-12", "2000-12-01", "month"),
+        ("2000-12-24", "2000-12-24", "day"),
+        ("2000-12-24T21:34:13", "2000-12-24T21:34:13", "second"),
+        ("  2000-12  ", "2000-12-01", "month"),
+    ],
+)
+def test_resolve_manual_infers_precision(
+    conn: sqlite3.Connection, entered: str, date: str, precision: str
+) -> None:
+    iid = _instance(conn, "scans/s1.png")
+    _resolution(conn, iid)
+    resolve_manual(conn, iid, entered)
+    row = _row(conn, iid)
+    assert (row["resolved_date"], row["resolved_precision"]) == (date, precision)
+
+
 def test_resolve_manual_validation(conn: sqlite3.Connection) -> None:
     iid = _instance(conn, "scans/s1.png")
     _resolution(conn, iid)
-    with pytest.raises(ReviewError, match="precision"):
-        resolve_manual(conn, iid, "2001-07-01", "week")
-    with pytest.raises(ReviewError, match="invalid date"):
-        resolve_manual(conn, iid, "01/07/2001", "day")
-    with pytest.raises(ReviewError, match="invalid date"):
-        resolve_manual(conn, iid, "2001-02-31", "day")
-    with pytest.raises(ReviewError, match="time component"):
-        resolve_manual(conn, iid, "2001-07-01", "second")
+    with pytest.raises(ReviewError, match="enter a year"):
+        resolve_manual(conn, iid, "01/07/2001")
+    with pytest.raises(ReviewError, match="not a real date"):
+        resolve_manual(conn, iid, "2001-02-31")
+    with pytest.raises(ReviewError, match="not a real date"):
+        resolve_manual(conn, iid, "2001-13")
     with pytest.raises(ReviewError, match="no date resolution"):
-        resolve_manual(conn, 9999, "2001-07-01", "day")
+        resolve_manual(conn, 9999, "2001-07-01")
 
 
 def test_batch_apply_folder_scoped_to_directory(conn: sqlite3.Connection) -> None:
@@ -418,3 +436,25 @@ def test_bulk_accept_pending_excludes_videos(conn: sqlite3.Connection) -> None:
     }
     assert status[img] == "reviewed"
     assert status[vid] == "pending"  # videos are never bulk-collapsed
+
+
+def test_bulk_accept_pending_include_video(conn: sqlite3.Connection) -> None:
+    a, b = _instance(conn, "a.jpg"), _instance(conn, "b.mov")
+    with conn:
+        img = conn.execute(
+            "INSERT INTO cluster (kind, status, winner_instance_id)"
+            " VALUES ('near_image', 'pending', ?)",
+            (a,),
+        ).lastrowid
+        vid = conn.execute(
+            "INSERT INTO cluster (kind, status, winner_instance_id)"
+            " VALUES ('near_video', 'pending', ?)",
+            (b,),
+        ).lastrowid
+    assert bulk_accept_pending(conn, include_video=True) == 2
+    status = {
+        r["id"]: r["status"]
+        for r in conn.execute("SELECT id, status FROM cluster")
+    }
+    assert status[img] == "reviewed"
+    assert status[vid] == "reviewed"  # opt-in includes videos

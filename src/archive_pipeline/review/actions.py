@@ -18,8 +18,6 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-PRECISIONS = ("second", "day", "month", "year")
-
 #: candidate name -> (date_resolution column, resolved_source label)
 _CANDIDATES = {
     "exif": ("cand_exif", "exif"),
@@ -81,24 +79,51 @@ def _apply_resolution(
         )
 
 
-def resolve_manual(
-    conn: sqlite3.Connection, instance_id: int, date: str, precision: str
-) -> None:
-    """Set a manually entered date with an explicit precision.
+def normalize_manual_date(entered: str) -> tuple[str, str]:
+    """Parse a typed date into a full ISO date and its inferred precision.
+
+    Accepts a year (``2000``), year-month (``2000-12``), year-month-day
+    (``2000-12-24``), or a full timestamp (``2000-12-24T21:34:13``). Partial
+    dates are padded to the first of the missing units; precision follows the
+    granularity typed.
 
     Usage:
-        >>> resolve_manual(conn, 7, "2001-07-01", "month")  # doctest: +SKIP
+        >>> normalize_manual_date("2000")
+        ('2000-01-01', 'year')
+        >>> normalize_manual_date("2000-12")
+        ('2000-12-01', 'month')
+        >>> normalize_manual_date("2000-12-24T21:34:13")
+        ('2000-12-24T21:34:13', 'second')
     """
-    if precision not in PRECISIONS:
-        raise ReviewError(f"invalid precision: {precision}")
-    if not _MANUAL_DATE_RE.match(date):
-        raise ReviewError(f"invalid date (want YYYY-MM-DD[THH:MM:SS]): {date}")
+    entered = entered.strip()
+    if _MANUAL_DATE_RE.match(entered):
+        date, precision = entered, ("second" if "T" in entered else "day")
+    else:
+        match = next(
+            ((template.format(entered), prec) for pattern, prec, template in _PARTIAL_DATE
+             if pattern.match(entered)),
+            None,
+        )
+        if match is None:
+            raise ReviewError(
+                "enter a year, year-month, year-month-day, or full timestamp"
+                f" (got {entered!r})"
+            )
+        date, precision = match
     try:
         datetime.fromisoformat(date)
     except ValueError as exc:
-        raise ReviewError(f"invalid date: {date}") from exc
-    if precision == "second" and "T" not in date:
-        raise ReviewError("second precision requires a time component")
+        raise ReviewError(f"not a real date: {entered}") from exc
+    return date, precision
+
+
+def resolve_manual(conn: sqlite3.Connection, instance_id: int, entered: str) -> None:
+    """Set a manually entered date, inferring precision from its granularity.
+
+    Usage:
+        >>> resolve_manual(conn, 7, "2001-07")  # doctest: +SKIP
+    """
+    date, precision = normalize_manual_date(entered)
     _resolution_row(conn, instance_id)
     _apply_resolution(
         conn, instance_id, date, precision, "review", "review.date.manual", {}
@@ -194,19 +219,7 @@ def batch_manual(
     entered = entered.strip()
     if _YEAR_RANGE.match(entered):
         return batch_bucket(conn, source, dir_path, entered)
-    date = precision = None
-    for pattern, prec, template in _PARTIAL_DATE:
-        if pattern.match(entered):
-            date, precision = template.format(entered), prec
-            break
-    if date is None or precision is None:
-        raise ReviewError(
-            f"enter a year, year-month, or year-month-day (got {entered!r})"
-        )
-    try:
-        datetime.fromisoformat(date)
-    except ValueError as exc:
-        raise ReviewError(f"not a real date: {entered}") from exc
+    date, precision = normalize_manual_date(entered)
     like = f"{dir_path}/%" if dir_path else "%"
     rows = conn.execute(
         "SELECT d.instance_id FROM date_resolution d JOIN instance i"

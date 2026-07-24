@@ -32,15 +32,12 @@
 <div class="card">
   <h2>Manual date</h2>
   <form method="post" action="/dates/item/{{ item.id }}/resolve">
-    <input name="manual_date" placeholder="YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS"
-           size="24" value="{{ item.resolved_date or '' }}">
-    <select name="precision">
-      {% for p in ("second", "day", "month", "year") %}
-      <option value="{{ p }}" {% if item.resolved_precision == p %}selected{% endif %}>{{ p }}</option>
-      {% endfor %}
-    </select>
+    <input name="manual_date" placeholder="2000, 2000-12, 2000-12-24, or 2000-12-24T21:34:13"
+           size="36" value="{{ item.resolved_date or '' }}">
     <button>Set date</button>
   </form>
+  <p class="muted">Precision follows what you type: a year, year-month, full
+    date, or full timestamp.</p>
   <form method="post" action="/dates/item/{{ item.id }}/sequence" style="margin-top:.5rem">
     <label>Sequence hint (intra-day order):
       <input name="hint" size="5" value="{{ item.sequence_hint if item.sequence_hint is not none else '' }}">

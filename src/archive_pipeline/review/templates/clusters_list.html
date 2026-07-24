@@ -19,9 +19,14 @@
             title="Accept the auto-chosen best copy for all remaining clusters (videos excluded — review those below)">
       2 · Accept the rest (keep the best copy)
     </button>
+    <button name="action" value="accept_videos"
+            title="Collapse duplicate-video clusters too — keeps the best copy of each; the duplicate videos go to quarantine (recoverable)">
+      3 · Accept video clusters too
+    </button>
   </form>
-  <p class="muted">Videos are never bulk-collapsed — review any video clusters
-    individually below.</p>
+  <p class="muted">Videos are held back from buttons 1–2 for extra care. Spot-check
+    a few below if you like, then use button 3 to accept the rest — the best copy
+    of each is kept and duplicate videos go to quarantine (recoverable).</p>
 </div>
 {% endif %}
 <table>

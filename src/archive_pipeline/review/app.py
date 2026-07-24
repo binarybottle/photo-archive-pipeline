@@ -254,14 +254,13 @@ def create_app(wt: WorkingTree) -> FastAPI:
         instance_id: int,
         candidate: str | None = Form(None),
         manual_date: str | None = Form(None),
-        precision: str = Form("day"),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Response:
         try:
             if candidate:
                 actions.accept_candidate(conn, instance_id, candidate)
             elif manual_date:
-                actions.resolve_manual(conn, instance_id, manual_date.strip(), precision)
+                actions.resolve_manual(conn, instance_id, manual_date.strip())
             else:
                 raise actions.ReviewError("choose a candidate or enter a date")
         except actions.ReviewError as exc:
@@ -404,6 +403,8 @@ def create_app(wt: WorkingTree) -> FastAPI:
             actions.bulk_prefer_curated(conn)
         elif action == "accept_all":
             actions.bulk_accept_pending(conn)
+        elif action == "accept_videos":
+            actions.bulk_accept_pending(conn, include_video=True)
         else:
             raise HTTPException(400, f"unknown bulk action: {action}")
         return RedirectResponse("/clusters", status_code=303)
