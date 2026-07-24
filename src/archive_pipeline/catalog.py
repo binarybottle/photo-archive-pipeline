@@ -199,6 +199,15 @@ SCHEMA_V8 = """
 ALTER TABLE date_resolution ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0;
 """
 
+SCHEMA_V9 = """
+-- The date-review queue tests each conflict for cluster membership by
+-- instance_id; the cluster_member primary key leads with cluster_id, so that
+-- lookup was a full scan. Index the reverse direction. IF NOT EXISTS keeps the
+-- statement safe if two connections cross this migration boundary at once (the
+-- review app opens the catalog per request).
+CREATE INDEX IF NOT EXISTS idx_cluster_member_instance ON cluster_member(instance_id);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
     Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
@@ -208,6 +217,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(6, "cluster_merge for dedup metadata merging (Stage 5)", SCHEMA_V6),
     Migration(7, "date_resolution.bucket for coarse archive buckets", SCHEMA_V7),
     Migration(8, "date_resolution.skipped to hide conflicts from the queue", SCHEMA_V8),
+    Migration(9, "index cluster_member(instance_id) for the date-review queue", SCHEMA_V9),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
