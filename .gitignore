@@ -7,3 +7,8 @@ dist/
 .pytest_cache/
 .hypothesis/
 .DS_Store
+
+# SQLite catalog / working-tree databases — never commit these
+*.db
+*.db-wal
+*.db-shm
