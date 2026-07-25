@@ -83,7 +83,7 @@ def test_filename_candidate_patterns() -> None:
 def test_filename_candidate_embedded_date() -> None:
     p = DEFAULT_FILENAME_DATE_PATTERNS
     # A valid YYYYMMDD embedded mid-name (day precision).
-    assert filename_candidate("x/kory_nyc_200704_ellora_20070408_PD(10).JPG", p) == (
+    assert filename_candidate("x/family_trip_200704_event_20070408_PD(10).JPG", p) == (
         "2007-04-08", "day"
     )
     assert filename_candidate("x/20030916_ultrasound.jpg", p) == ("2003-09-16", "day")

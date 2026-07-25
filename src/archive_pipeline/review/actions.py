@@ -213,7 +213,7 @@ def batch_manual(
     count updated.
 
     Usage:
-        >>> batch_manual(conn, "LOCAL", "Ellora/2004", "2004")  # doctest: +SKIP
+        >>> batch_manual(conn, "LOCAL", "Vacation/2004", "2004")  # doctest: +SKIP
         116
     """
     entered = entered.strip()
@@ -244,7 +244,7 @@ def batch_skip(
     Returns the number of rows changed.
 
     Usage:
-        >>> batch_skip(conn, "LOCAL", "Ellora/_movies", True)  # doctest: +SKIP
+        >>> batch_skip(conn, "LOCAL", "Vacation/_movies", True)  # doctest: +SKIP
         20
     """
     like = f"{dir_path}/%" if dir_path else "%"

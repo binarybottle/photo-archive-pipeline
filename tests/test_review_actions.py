@@ -172,14 +172,14 @@ def test_batch_apply_exif(conn: sqlite3.Connection) -> None:
 
 
 def test_batch_apply_filename(conn: sqlite3.Connection) -> None:
-    a = _instance(conn, "Ellora/2004/a.jpg")
-    b = _instance(conn, "Ellora/2004/b.jpg")
+    a = _instance(conn, "Vacation/2004/a.jpg")
+    b = _instance(conn, "Vacation/2004/b.jpg")
     for iid in (a, b):
         _resolution(
             conn, iid, cand_exif="2002-09-01T10:00:00", cand_folder="2004-01-01",
             folder_precision="year", cand_filename="2004-06-23",
         )
-    assert batch_apply(conn, "LOCAL", "Ellora/2004", "filename") == 2
+    assert batch_apply(conn, "LOCAL", "Vacation/2004", "filename") == 2
     row = _row(conn, a)
     assert (row["resolved_date"], row["resolved_source"], row["resolved_precision"]) == (
         "2004-06-23", "filename", "day"
