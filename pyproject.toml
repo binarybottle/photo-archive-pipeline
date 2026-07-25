@@ -2,7 +2,7 @@
 name = "archive-pipeline"
 version = "0.1.0"
 description = "Non-destructive consolidation of a 30-year photo/video collection into a canonical, date-organized archive with verifiable zero-loss guarantees."
-authors = [{ name = "Arno Klein", email = "binarybottle@gmail.com" }]
+authors = [{ name = "Arno Klein", email = "binarybottle@proton.me" }]
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
