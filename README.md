@@ -3,7 +3,9 @@
 Consolidates ~30 years of photos and videos — a locally organized folder tree
 plus one or more Google Takeout exports — into a single, canonical,
 date-organized archive (`archive/YYYY/YYYY-MM/…`) with dates, GPS, captions, and
-topical keywords embedded in the files themselves.
+topical keywords written into each file — or, for videos, RAW, and any format
+whose metadata block can't be safely rewritten, into an `.xmp` sidecar beside
+the file, leaving its bytes bit-identical.
 
 **The promise:** your source files are opened read-only and never modified,
 nothing is ever deleted (duplicates and rejects go to a quarantine you purge
@@ -21,10 +23,14 @@ Design details are in `photo_archive_pipeline_spec.md`; contributor rules are in
 - **macOS**, Python 3.12+, [Poetry](https://python-poetry.org)
 - `brew install exiftool ffmpeg` (ffmpeg is needed to fingerprint videos —
   install it **before** ingesting if you have any)
-- A **working-tree location on an APFS volume** with room for roughly **2× your
-  collection** (it holds the archive *and* a quarantine copy of everything until
-  you purge). It can be your internal SSD or an external APFS drive — but **not**
-  the same drive as your backup.
+- A **working-tree location on an APFS volume** with room for **roughly your
+  whole collection again**: it holds the deduped `archive/` plus a `quarantine/`
+  copy of the duplicate *losers*, which together come to about the size of your
+  originals. If the working tree sits on the **same volume as your sources**, you
+  therefore need about **2× your collection** free there. It can be your internal
+  SSD or an external APFS drive — but **not** the same drive as your backup. The
+  `materialize` dry-run prints the exact bytes required before you commit, and
+  the real run pauses cleanly (resumable) if free space runs low.
 
 ```bash
 git clone <this repo> && cd photo-archive-pipeline
@@ -151,9 +157,14 @@ archive review serve          # then open http://127.0.0.1:8765
 
 Run this in its own terminal (it's a local web server, 127.0.0.1 only). Work the
 **Date conflicts** queue (each folder group shows its candidate dates with batch
-"apply folder date" / "trust EXIF" buttons) and the **Duplicate clusters** queue
-(accept / swap winner / split / not-a-duplicate). Every action is saved and
-survives re-running `date-resolve` or `dedup`. Stop and restart anytime.
+"apply folder date" / "trust EXIF" buttons; the manual field accepts a year
+`2007`, year-month `2007-08`, a full date, or a full timestamp and infers the
+precision) and the **Duplicate clusters** queue (accept / swap winner / split /
+not-a-duplicate). Bulk buttons clear the common cases in one click — "prefer my
+curated copies over Takeout", "accept the rest", and a separate "accept video
+clusters too" (videos are held back from the general accept for extra care).
+Every action is saved and survives re-running `date-resolve` or `dedup`. Stop
+and restart anytime.
 
 ### 9 · Preview the archive — dry run, **⟳ review**
 
@@ -175,7 +186,11 @@ archive materialize --execute
 ```
 
 Copies each winner into `archive/`, writes its metadata via exiftool, and copies
-losers to `quarantine/`. Space-checked before it starts; resumable if
+losers to `quarantine/`. For JPEG/HEIC/PNG/TIFF the metadata is written into the
+file (verified by re-hashing the copy); for videos, RAW, and any file whose
+metadata block can't be safely rewritten, the bytes are left bit-identical and
+the metadata goes to an `.xmp` sidecar next to it. It reports how many files
+took a sidecar at the end. Space-checked before it starts; resumable if
 interrupted. Your sources are still never touched.
 
 ### 11 · Prove nothing was lost
@@ -205,10 +220,16 @@ missing, altered, or unaccounted for.
 
 ## After you have an archive
 
-- **Browse it:** point [digiKam](https://www.digikam.org) (its database on your
-  internal SSD) read-mostly at `archive/`. It reads the embedded XMP keywords as
-  tags and the `Rating=4` on preferred edits, and its duplicate finder is an
-  independent second audit of the dedup.
+- **Browse it:** point [digiKam](https://www.digikam.org) (its own database on
+  your internal SSD) read-mostly at `archive/` — the `archive/` folder only, not
+  the whole working tree. It reads XMP keywords as tags and the `Rating=4` on
+  preferred edits, and its duplicate finder is an independent second audit of the
+  dedup. **Enable "Read from sidecar files"** in Settings → Metadata → *Sidecars*,
+  and match exiftool's `name.ext.xmp` naming (disable the "compatible with
+  commercial programs" / strip-extension option) — otherwise digiKam misses the
+  keywords and dates on every video and RAW file, whose metadata lives in
+  sidecars. Leave `catalog.db` alone; it's the pipeline's ledger, still needed by
+  `maintain import` and `verify`.
 - **Back it up:** keep 3-2-1 copies of `archive/` + `catalog.db` + `reports/`
   (e.g. restic/borg). Re-check integrity periodically:
   ```bash
@@ -220,11 +241,24 @@ missing, altered, or unaccounted for.
   ```
   then review and `materialize` as usual. Byte-identical newcomers never displace
   what's already archived.
-- **Reclaim quarantine space — carefully, much later:** only after `verify`
-  passes, backups exist, and you've lived with the archive for ~6 months:
+- **Reclaim quarantine space — carefully:** this permanently deletes the
+  quarantined duplicates (often hundreds of GB), so do it only once `verify`
+  passes and a **verbatim backup of your originals exists** — that backup, not
+  the quarantine, is then your safety net. The command refuses unless the last
+  `verify` passed, lists what it will destroy, and asks you to type
+  `PURGE QUARANTINE`:
   ```bash
-  archive maintain purge-quarantine     # asks you to type a confirmation phrase
+  archive maintain purge-quarantine
   ```
+  If the interactive prompt won't accept your input (e.g. a wrapped or
+  non-interactive terminal), pipe the phrase in instead:
+  ```bash
+  echo "PURGE QUARANTINE" | archive maintain purge-quarantine
+  ```
+  It leaves a `quarantine/.purged.json` marker so later `verify` /
+  `maintain verify-checksums` runs know the quarantine was emptied on purpose and
+  skip those file checks. (The built-in prompt also suggests waiting ~6 months if
+  you'd rather keep the safety net local for a while.)
 
 ## Working-tree layout
 
@@ -233,7 +267,10 @@ archive-project/
   catalog.db        single source of truth (SQLite)
   config.toml       all your settings and overrides
   archive/          the canonical output: YYYY/YYYY-MM/<name>__<hash>.<ext>
+                    (+ a .xmp sidecar beside videos, RAW, and any file whose
+                     metadata couldn't be written in place)
   quarantine/       losers, kept byte-identical, until you purge
+                    (.purged.json marks a completed purge)
   reports/          manifests, audit samples, verify report (CSV/JSON)
   logs/             structured run logs (JSONL)
   staging/          extracted Takeout zips (pipeline-owned)
