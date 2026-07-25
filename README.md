@@ -1,6 +1,6 @@
 # photo-archive-pipeline
 
-Consolidates ~30 years of photos and videos — a locally organized folder tree
+Consolidates years of photos and videos — a locally organized folder tree
 plus one or more Google Takeout exports — into a single, canonical,
 date-organized archive (`archive/YYYY/YYYY-MM/…`) with dates, GPS, captions, and
 topical keywords written into each file — or, for videos, RAW, and any format
