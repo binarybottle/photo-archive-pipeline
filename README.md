@@ -220,16 +220,35 @@ missing, altered, or unaccounted for.
 
 ## After you have an archive
 
-- **Browse it:** point [digiKam](https://www.digikam.org) (its own database on
-  your internal SSD) read-mostly at `archive/` — the `archive/` folder only, not
-  the whole working tree. It reads XMP keywords as tags and the `Rating=4` on
-  preferred edits, and its duplicate finder is an independent second audit of the
-  dedup. **Enable "Read from sidecar files"** in Settings → Metadata → *Sidecars*,
-  and match exiftool's `name.ext.xmp` naming (disable the "compatible with
-  commercial programs" / strip-extension option) — otherwise digiKam misses the
-  keywords and dates on every video and RAW file, whose metadata lives in
-  sidecars. Leave `catalog.db` alone; it's the pipeline's ledger, still needed by
-  `maintain import` and `verify`.
+- **Browse and manage it in [digiKam](https://www.digikam.org).** Point a
+  digiKam collection at your `archive/` folder (only that folder), and configure
+  it so it reads the pipeline's metadata and never modifies your originals. In
+  **Settings → Configure digiKam → Metadata**:
+  - *Sidecars* tab: **enable "Read from sidecar files"** (or digiKam shows no
+    keywords/dates for any video or RAW — their metadata lives in `.xmp`
+    sidecars). **Leave "Sidecar file names are compatible with commercial
+    programs" unchecked** — the pipeline writes `name.ext.xmp`, and checking that
+    box makes digiKam look for `name.xmp` and miss them all.
+  - To keep the archive byte-for-byte intact (so `verify` stays valid, and so a
+    synced folder isn't churned): enable **"Write to sidecar files"** and set the
+    dropdown to **"Write to XMP sidecar only"** — every tag/rating/face you add
+    goes to a sidecar, never into the photo. On the *Rotation* tab choose
+    **"Rotate by only setting a flag"** (lossless), not "changing the content".
+  - Put digiKam's **database on your local SSD, not inside the archive** (and
+    never inside a synced folder — a live SQLite DB will corrupt/conflict).
+  - Organize with **tags, ratings, labels, faces, and saved searches** — not by
+    moving files. The date-folder tree is the stable physical layout; a photo
+    takes one folder but many tags, and tagging only touches sidecars. Its
+    duplicate finder is also a handy independent second audit of the dedup.
+  - Leave `catalog.db` alone; it's the pipeline's ledger, still needed by
+    `maintain import` and `verify`.
+- **Moving `archive/` out of the working tree?** You can keep the archive
+  anywhere (a bigger drive, a synced folder). The pipeline's `verify` / `report`
+  / `maintain` still expect it *at* `<working-tree>/archive`, so point them back
+  with a symlink instead of copying it:
+  ```bash
+  ln -s /wherever/you/moved/archive /path/to/archive-project/archive
+  ```
 - **Back it up:** keep 3-2-1 copies of `archive/` + `catalog.db` + `reports/`
   (e.g. restic/borg). Re-check integrity periodically:
   ```bash
