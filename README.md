@@ -1,411 +1,559 @@
 # photo-archive-pipeline
 
-Consolidates years of photos and videos — a locally organized folder tree
-plus one or more Google Takeout exports — into a single, canonical,
-date-organized archive (`archive/YYYY/YYYY-MM/…`) with dates, GPS, captions, and
-topical keywords written into each file — or, for videos, RAW, and any format
-whose metadata block can't be safely rewritten, into an `.xmp` sidecar beside
-the file, leaving its bytes bit-identical.
+Turns years of scattered photos — a messy folder tree, plus any number of Google
+Takeout exports — into one clean archive organized by date, with each photo's
+date, location, and captions written into the file itself.
 
-**The promise:** your source files are opened read-only and never modified,
-nothing is ever deleted (duplicates and rejects go to a quarantine you purge
-later, by hand), and a final `verify` step proves on disk that every original is
-accounted for. Everything the pipeline writes lives under one working-tree
-directory — delete it and your originals are untouched.
+It finds duplicates, works out the real date of each photo, and proves at the end
+that nothing was lost along the way.
 
-Design details are in `photo_archive_pipeline_spec.md`; contributor rules are in
-`CLAUDE.md`.
+```
+Before                                After
+──────                                ─────
+Photos/                               archive/
+  2015 vacation/                        2015/
+  iphone backup old/                      2015-06/
+  Takeout/Google Photos/                    2015-06-14 09.31.02__a3f9c1b2.jpg
+  scans_untitled/                           2015-06-14 09.31.55__7c2e04da.jpg
+  DCIM copy 2/                          2016/
+  ...duplicates everywhere                  ...
+                                        undated/     (dates it couldn't work out)
+                                      quarantine/    (the duplicate copies)
+```
+
+**The safety promise, in one paragraph.** Your original photos are opened
+read-only and never changed, moved, or deleted — not once, at any stage. Nothing
+is thrown away: duplicates are set aside in a `quarantine/` folder that you
+delete by hand, much later, only when you're ready. Everything the tool creates
+lives inside one folder you choose; delete that folder and it's as if you never
+ran it. At the end, a `verify` step re-reads every file on disk and proves every
+single original is accounted for.
+
+New here? Read [Before you start](#before-you-start), then
+[Build your archive](#build-your-archive). Already have an archive? Jump to
+[Everyday tasks](#everyday-tasks).
+
+<sub>Design details live in `photo_archive_pipeline_spec.md`; contributor rules
+in `CLAUDE.md`.</sub>
 
 ---
 
-## Prerequisites
+## Before you start
 
-- **macOS**, Python 3.12+, [Poetry](https://python-poetry.org)
-- `brew install exiftool ffmpeg` (ffmpeg is needed to fingerprint videos —
-  install it **before** ingesting if you have any)
-- A **working-tree location on an APFS volume** with room for **roughly your
-  whole collection again**: it holds the deduped `archive/` plus a `quarantine/`
-  copy of the duplicate *losers*, which together come to about the size of your
-  originals. If the working tree sits on the **same volume as your sources**, you
-  therefore need about **2× your collection** free there. It can be your internal
-  SSD or an external APFS drive — but **not** the same drive as your backup. The
-  `materialize` dry-run prints the exact bytes required before you commit, and
-  the real run pauses cleanly (resumable) if free space runs low.
+### What you need installed
+
+Built and tested on **macOS**; it should work on Linux too, where only the
+install commands differ.
+
+```bash
+brew install exiftool ffmpeg      # macOS
+```
+
+- **exiftool** — required. It's the only thing that reads or writes photo metadata.
+- **ffmpeg** — required if you have any videos. It fingerprints them so duplicate
+  videos can be found. **Install it before you start**, or videos get flagged as
+  unfingerprintable.
+- **Python 3.12+** and [Poetry](https://python-poetry.org).
 
 ```bash
 git clone <this repo> && cd photo-archive-pipeline
 poetry install
 ```
 
+### How much disk space
+
+You need room for **roughly your whole collection a second time**, in one place.
+
+Here's why: the tool builds a deduplicated `archive/`, *and* keeps every
+duplicate it set aside in `quarantine/`. Added together, those come to about the
+size of what you started with.
+
+> **If you put that folder on the same drive as your photos, you need about 2×
+> your collection free on that drive.**
+
+It can be your internal drive or an external one — but **not the same drive as
+your backup**, which needs to survive this drive failing. Avoid FAT/exFAT
+volumes. You'll get an exact number before anything is written: the `materialize`
+step prints the precise space required and refuses to start without enough room.
+If space runs low mid-run it pauses cleanly and you can resume.
+
 ---
 
-## One-time shell setup
+## One-time setup
 
-Point the tool at your working tree once, so every command stays short:
+Tell the tool where its working folder is, once per terminal session, so every
+command afterwards stays short:
 
 ```bash
 cd /path/to/photo-archive-pipeline
-export ARCHIVE_WORKING_TREE=/path/to/archive-project   # the pipeline-owned dir
-alias archive="poetry run archive"                     # convenience for this shell
+export ARCHIVE_WORKING_TREE=/path/to/archive-project   # the tool's own folder
+alias archive="poetry run archive"
 ```
 
-Every `archive …` command below is shorthand for `poetry run archive …`, and
-each one operates on `ARCHIVE_WORKING_TREE`. (You can instead pass
-`--working-tree /path/...` to any command.)
+Every `archive …` command in this README is shorthand for `poetry run archive …`,
+and each one acts on `ARCHIVE_WORKING_TREE`. (You can also pass
+`--working-tree /path/…` to any command instead.)
+
+That "working folder" — `archive-project` above — is where everything the tool
+creates lives. Pick a location with the space described above. It does **not**
+have to be near your photos.
 
 ---
 
-## The workflow — what to run, in order
+## Build your archive
 
-Run these stages top to bottom. Each stage is **re-runnable**: running a
-completed stage again with no new input does nothing, and re-runs **preserve any
-review decisions** you've made. Stages that need your judgment are marked
-**⟳ review**.
+Run these in order, top to bottom.
 
-### 1 · Initialize the working tree
+**Every step is safe to re-run.** Running a finished step again does nothing, and
+re-running never throws away decisions you made. If a long step is interrupted,
+run the exact same command again and it picks up where it stopped.
+
+Steps marked **👤 you decide** need your input before you move on.
+
+### 1. Create the working folder
 
 ```bash
 archive init
 ```
 
-Creates `catalog.db`, `config.toml`, and empty `archive/ quarantine/ reports/
-logs/`. Safe to run anytime.
+Creates `catalog.db` (the tool's record of everything), `config.toml` (your
+settings), and empty `archive/ quarantine/ review/ reports/ logs/ staging/`
+folders. Safe to run anytime.
 
-### 2 · Back up your sources, then open the gate — **required, once**
+### 2. Back up your photos, then unlock the tool — **required, once**
 
-Make a verbatim backup of every source on a **separate physical disk** (Time
-Machine counts, as long as it isn't *excluding* your photos). Then edit
-`config.toml` and set:
+Copy every source folder to a **separate physical disk** first. Time Machine
+counts, as long as it isn't set to exclude your photos.
+
+Then open `config.toml` and change:
 
 ```toml
 [preserve]
 confirmed = true
 ```
 
-`ingest` refuses to run until you do. The pipeline never touches your sources —
-this backup is your insurance if a drive dies mid-run.
+The next step refuses to run until you do. This tool genuinely never touches your
+originals — but only a real backup protects you if the drive itself dies
+halfway through.
 
-### 3 · Ingest your sources
+### 3. Read in your photos
 
 ```bash
-# your local photo tree:
+# your own photo folder:
 caffeinate -i archive ingest --source LOCAL --root /path/to/photos
 
-# each Google Takeout export is a SEPARATE source (a .zip or an extracted folder):
+# each Google Takeout export is a SEPARATE source — a .zip or an unzipped folder:
 caffeinate -i archive ingest --source TAKEOUT --root /path/to/takeout.zip --export-id 2024
 ```
 
-Catalogs every file (SHA-256, EXIF, perceptual hash, video signature). This is
-the **long** stage — expect an overnight run for a large library. It's
-resumable: if it's interrupted, run the same command again and it continues.
-`caffeinate -i` keeps the Mac awake; sources stay read-only throughout.
+Records every file: its fingerprint, its embedded photo info, and a visual
+signature used later to spot near-duplicates.
 
-### 4 · Normalize Takeout sidecars — *only if you ingested a TAKEOUT source*
+**This is the slow one** — expect it to run overnight for a big collection.
+`caffeinate -i` stops your Mac sleeping through it. If it's interrupted, just run
+the same command again. Your photos are only ever read.
+
+### 4. Match up Google's sidecar files — *only if you used Takeout*
 
 ```bash
 archive takeout-normalize
 ```
 
-Matches Google's `.json` sidecars to their photos. **Skip this if you only have
-LOCAL sources.** (Old Takeout content that's already merged *inside* your local
-tree is handled by the next step, not here.)
+Google exports each photo's date and caption in a separate `.json` file. This
+pairs them back up with their photos.
 
-### 5 · Classify your local folders — **⟳ review**
+**Skip this step entirely if you only have your own folders.** (Old Takeout
+content already sitting *inside* your own photo folder is handled by step 5, not
+here.)
+
+### 5. Sort your own folders from old Google dumps — **👤 you decide**
 
 ```bash
 archive local-provenance
 ```
 
-Decides which LOCAL folders are your own curation versus old Google dumps (which
-shouldn't inherit your careful dating).
+Works out which of your folders you organized yourself, versus which are old
+Google exports you dumped somewhere and forgot. This matters because your own
+folder names are trustworthy evidence of a date, and Google's aren't.
 
-→ **Then:** open `reports/local_provenance.csv`. If a folder is misclassified,
-add its path prefix under `[provenance]` in `config.toml`
-(`curated_overrides` or `takeout_derived_overrides`) and re-run this step.
+**👤 Then:** open `reports/local_provenance.csv` and skim it. If something is
+labelled wrong, add its path under `[provenance]` in `config.toml` — as
+`curated_overrides` (it's yours) or `takeout_derived_overrides` (it's a Google
+dump) — and run the step again.
 
-### 6 · Resolve capture dates — **⟳ review**
+### 6. Work out each photo's date — **👤 you decide**
 
 ```bash
 archive date-resolve
 ```
 
-Assigns each photo a date using the trust hierarchy (your dated folders outrank
-EXIF, which outranks Google's dates). Prints how many resolved automatically vs.
-need review, and writes `reports/date_audit_sample.csv` to spot-check.
+Gives every photo a date, preferring the most trustworthy source available: a
+date in one of *your* folder names beats the camera's own timestamp, which beats
+Google's. It prints how many it settled automatically and how many need you, and
+writes `reports/date_audit_sample.csv` so you can spot-check its work.
 
-→ **Then:** clear the conflicts in the review UI (step 8). This is optional —
-anything you leave unresolved is filed under `archive/undated/`, recoverable, not
-lost.
+**👤 Then:** settle the conflicts in the review app (step 8). This is optional —
+anything you leave undecided is filed under `archive/undated/`, where it's easy
+to find later. Nothing is lost either way.
 
-### 7 · Find duplicates
+### 7. Find the duplicates
 
 ```bash
 archive dedup
 ```
 
-Groups exact and near-duplicates, picks the best copy of each, and marks the
-rest for quarantine. Uncertain cases queue for review.
+Groups identical and near-identical photos, picks the best copy of each group,
+and marks the others to be set aside. Anything it isn't confident about is left
+for you.
 
-→ **Then:** review the duplicate clusters in the UI (step 8). This review **is
-required** — `materialize` won't run while any cluster is still pending.
+**👤 Then:** review those groups in the app (step 8). **This one is required** —
+step 10 refuses to run while any group is still undecided.
 
-### 8 · Review — the human UI (date conflicts + duplicate clusters)
+### 8. Review — the part only you can do
 
 ```bash
 archive review serve          # then open http://127.0.0.1:8765
 ```
 
-Run this in its own terminal (it's a local web server, 127.0.0.1 only). Work the
-**Date conflicts** queue (each folder group shows its candidate dates with batch
-"apply folder date" / "trust EXIF" buttons; the manual field accepts a year
-`2007`, year-month `2007-08`, a full date, or a full timestamp and infers the
-precision) and the **Duplicate clusters** queue (accept / swap winner / split /
-not-a-duplicate). Bulk buttons clear the common cases in one click — "prefer my
-curated copies over Takeout", "accept the rest", and a separate "accept video
-clusters too" (videos are held back from the general accept for extra care).
-Every action is saved and survives re-running `date-resolve` or `dedup`. Stop
-and restart anytime.
+Run this in its own terminal window. It's a small web app on your own machine
+(nothing is exposed to the internet). You'll find two queues:
 
-### 9 · Preview the archive — dry run, **⟳ review**
+- **Date conflicts** — each group shows the competing dates with one-click "use
+  the folder's date" / "trust the camera" buttons. The manual box accepts a year
+  (`2007`), a year-month (`2007-08`), a full date, or a full timestamp, and
+  works out how precise you were being.
+- **Duplicate groups** — accept the suggested keeper, pick a different one, split
+  the group, or say it isn't a duplicate at all.
+
+Bulk buttons clear the common cases at once: "prefer my own copies over
+Takeout's", "accept the rest", and a separate "accept video groups too" (videos
+are held back from the general accept so they get a second look).
+
+Everything you decide is saved immediately and survives re-running earlier steps.
+Stop and come back whenever you like.
+
+### 9. Preview the result — nothing is written yet
 
 ```bash
-archive materialize            # writes NOTHING
+archive materialize            # writes NO photos
 ```
 
-Produces `reports/archive_manifest.csv`, `quarantine_manifest.csv`, and
-`keyword_map.csv`, and prints the **exact disk space** the real run will need.
+Shows you exactly what the real run will do, and prints **precisely how much disk
+space** it needs. It produces three files in `reports/`:
 
-→ **Then:** edit `reports/keyword_map.csv` to choose how topical folder names
-become keywords (`keep` / `rename` / `drop`), and skim the manifests to confirm
-where things will land.
+- `archive_manifest.csv` — every photo and where it will land
+- `quarantine_manifest.csv` — every duplicate being set aside, and why
+- `keyword_map.csv` — your topical folder names, ready to become tags
 
-### 10 · Build the archive — the only step that writes files
+**👤 Then:** open `reports/keyword_map.csv` and decide what each folder name
+should become — `keep` it as a tag, `rename` it to something better, or `drop` it.
+Skim the other two to confirm things are landing where you expect.
+
+### 10. Build it — the only step that writes photos
 
 ```bash
 archive materialize --execute
 ```
 
-Copies each winner into `archive/`, writes its metadata via exiftool, and copies
-losers to `quarantine/`. For JPEG/HEIC/PNG/TIFF the metadata is written into the
-file (verified by re-hashing the copy); for videos, RAW, and any file whose
-metadata block can't be safely rewritten, the bytes are left bit-identical and
-the metadata goes to an `.xmp` sidecar next to it. It reports how many files
-took a sidecar at the end. Space-checked before it starts; resumable if
-interrupted. Your sources are still never touched.
+Copies each keeper into `archive/`, writes its date, location and tags into the
+file, and copies the duplicates into `quarantine/`.
 
-### 11 · Prove nothing was lost
+For JPEG, HEIC, PNG and TIFF the information goes inside the file, and the copy
+is re-read afterwards to confirm it's intact. For videos, RAW files, and anything
+whose internal structure is risky to rewrite, **the file's bytes are left
+completely untouched** and the information goes into a small companion `.xmp`
+file next to it. It tells you how many took that route.
+
+Checks disk space before starting, resumable if interrupted, and your originals
+still haven't been touched.
+
+### 11. Prove nothing was lost
 
 ```bash
-archive verify                 # conservation law + checksums; fails loudly on any gap
-archive report                 # human-readable summary of the whole archive
+archive verify
+archive report
 ```
 
-`verify` exits non-zero and enumerates the exact discrepancies if anything is
-missing, altered, or unaccounted for.
+`verify` re-reads every file in `archive/` and `quarantine/`, checks each one
+against its recorded fingerprint, and confirms every original you started with is
+accounted for. It's thorough, so it takes a while on a big archive. If anything
+is missing or altered it says exactly what, and exits with an error.
+
+`report` prints a plain summary — how many photos, from where, dated how, and
+whether the last `verify` passed.
 
 ---
 
-## The rules that keep you safe
+## Everyday tasks
 
-- **Sources are read-only** and never modified — metadata is written only to
-  copies inside the working tree.
-- **Nothing is deleted.** Duplicates and rejects sit in `quarantine/` until you
-  purge them by hand, much later.
-- **`materialize` is a dry run by default** — only `--execute` writes files, and
-  it space-checks first.
-- **Every stage is resumable and re-runnable**, and re-runs preserve your review
-  decisions.
-- **Everything is under the working tree.** `archive/` is a normal folder tree
-  you can copy elsewhere (e.g. to your laptop) once `verify` passes.
+Your archive is built. Now you just live with it. Four things come up:
 
-## After you have an archive
+1. [I have new photos to add](#1-i-have-new-photos-to-add)
+2. [I moved photos into different folders](#2-i-moved-photos-into-different-folders)
+3. [I deleted photos I don't want](#3-i-deleted-photos-i-dont-want)
+4. [I moved a whole folder out of the archive](#4-i-moved-a-whole-folder-out-of-the-archive)
 
-- **Browse and manage it in [digiKam](https://www.digikam.org).** Point a
-  digiKam collection at your `archive/` folder (only that folder), and configure
-  it so it reads the pipeline's metadata and never modifies your originals. In
-  **Settings → Configure digiKam → Metadata**:
-  - *Sidecars* tab: **enable "Read from sidecar files"** (or digiKam shows no
-    keywords/dates for any video or RAW — their metadata lives in `.xmp`
-    sidecars). **Leave "Sidecar file names are compatible with commercial
-    programs" unchecked** — the pipeline writes `name.ext.xmp`, and checking that
-    box makes digiKam look for `name.xmp` and miss them all.
-  - To keep the archive byte-for-byte intact (so `verify` stays valid, and so a
-    synced folder isn't churned): enable **"Write to sidecar files"** and set the
-    dropdown to **"Write to XMP sidecar only"** — every tag/rating/face you add
-    goes to a sidecar, never into the photo. On the *Rotation* tab choose
-    **"Rotate by only setting a flag"** (lossless), not "changing the content".
-  - Put digiKam's **database on your local SSD, not inside the archive** (and
-    never inside a synced folder — a live SQLite DB will corrupt/conflict).
-  - Prefer **tags, ratings, labels, faces, and saved searches** over moving
-    files: a photo takes one folder but many tags, and tagging only touches
-    sidecars. Moving and deleting are still fine — just run `maintain reconcile`
-    afterwards (below) so the catalog keeps up. Its duplicate finder is also a
-    handy independent second audit of the dedup.
-  - Leave `catalog.db` alone; it's the pipeline's ledger, still needed by
-    `maintain import` and `verify`.
-- **Moved, renamed, or deleted things in digiKam?** That's expected and safe —
-  the pipeline never fights you for the tree — but you then run
-  `maintain reconcile` so the catalog keeps up. See
-  [Routine tasks](#routine-tasks) below for the exact steps.
-- **Moving `archive/` out of the working tree?** You can keep the archive
-  anywhere (a bigger drive, a synced folder). The pipeline's `verify` / `report`
-  / `maintain` still expect it *at* `<working-tree>/archive`, so point them back
-  with a symlink instead of copying it:
-  ```bash
-  ln -s /wherever/you/moved/archive /path/to/archive-project/archive
-  ```
-- **Back it up:** keep 3-2-1 copies of `archive/` + `catalog.db` + `reports/`
-  (e.g. restic/borg). Re-check integrity periodically:
-  ```bash
-  archive maintain verify-checksums
-  ```
-- **Add new photos, or make your digiKam edits stick:** see
-  [Routine tasks](#routine-tasks) below.
-- **Reclaim quarantine space — carefully:** this permanently deletes the
-  quarantined duplicates (often hundreds of GB), so do it only once `verify`
-  passes and a **verbatim backup of your originals exists** — that backup, not
-  the quarantine, is then your safety net. The command refuses unless the last
-  `verify` passed, lists what it will destroy, and asks you to type
-  `PURGE QUARANTINE`:
-  ```bash
-  archive maintain purge-quarantine
-  ```
-  If the interactive prompt won't accept your input (e.g. a wrapped or
-  non-interactive terminal), pipe the phrase in instead:
-  ```bash
-  echo "PURGE QUARANTINE" | archive maintain purge-quarantine
-  ```
-  It leaves a `quarantine/.purged.json` marker so later `verify` /
-  `maintain verify-checksums` runs know the quarantine was emptied on purpose and
-  skip those file checks. (The built-in prompt also suggests waiting ~6 months if
-  you'd rather keep the safety net local for a while.)
+### First, the one idea behind all of them
 
-## Routine tasks
+The tool **does not watch your archive folder**. It has no idea you moved,
+renamed, or deleted anything until you tell it. So whenever you change things —
+usually in digiKam — you run a command afterwards to say "here's what I did."
 
-A handful of things come up over and over once the archive is live:
+That command is `archive maintain reconcile`. It looks at your archive, works out
+what changed, and updates its records.
 
-- [A. Import a new batch of photos](#a-i-want-to-import-a-new-batch-of-photos)
-- [B. Make digiKam folder moves count](#b-i-moved-photos-around-in-digikam-and-want-the-moves-to-count)
-- [C. Delete photos, and empty digiKam's trash](#c-i-deleted-photos-in-digikam--and-maybe-emptied-the-trash)
-- [D. Move whole folders out of the archive](#d-i-moved-whole-folders-out-of-archive)
+**None of this can hurt your photos.** The only command that writes photo files
+is `materialize`, and it just shows you the plan until you add `--execute`.
+`reconcile` never moves, edits, or deletes a photo at all — it only updates the
+tool's own records. Running any of these twice is harmless.
 
-None of it happens automatically — the pipeline is a batch tool, not a daemon —
-so run these when you want the catalog to catch up with what you did. Every
-command below is a **dry run until you add `--execute`**, and every one is safe
-to run twice.
+### The two commands you'll use most
 
-### A. I want to import a new batch of photos
-
-```bash
-archive maintain import --root /path/to/new-photos    # ingest + date + dedup
-archive review serve                                  # resolve anything ambiguous
-archive materialize                                   # dry run: see the plan
-archive materialize --execute                         # copy into archive/
-archive verify                                        # prove nothing was lost
-```
-
-`maintain import` reads the new folder, dates each file, and dedups it against
-what you already have; byte-identical newcomers never displace what's archived.
-It stops short of copying so you can review first — check
-`reports/date_audit_sample.csv` and the review queue, then materialize.
-
-**Do not point `--root` at a folder inside your existing source root, or at
-anything holding files the pipeline already archived** (including files you
-exported *out* of `archive/`). They would be ingested a second time under a new
-source id and re-materialized back into the archive. Keep exported and
-still-to-import material in separate places.
-
-### B. I moved photos around in digiKam and want the moves to count
-
-Dragging a photo into a different `YYYY-MM` folder does **not** change its date
-on its own — digiKam reads dates from metadata, not from the path. Two commands
-make it real:
-
-```bash
-# 1. Quit digiKam first (it writes the same .xmp files).
-archive maintain reconcile                  # dry run: explains every difference
-archive maintain reconcile --execute        # adopt it — catalog only, no file touched
-archive maintain apply-sidecars --execute   # write the dates/keywords into .xmp
-archive verify                              # back to a clean proof
-```
-
-Then in digiKam: **Album → Reread Metadata From File** to see the changes.
-
-Reconcile reads each destination folder as an instruction:
-
-| You moved a photo into | It means |
+| Command | What it means |
 |---|---|
-| `2005/2005-01/` | date corrected to January 2005 |
-| `caves/` | keyword `caves` |
-| `caves/2006/` | keyword `caves` **and** year 2006 |
-| `undated/`, `pre-2000/`, `2004-2006/` | filed coarsely, no date asserted |
+| `archive maintain reconcile` | "Here's what I changed — write it down." |
+| `archive maintain apply-sidecars` | "Now make those changes visible in digiKam." |
 
-A folder date that already *agrees* with the photo's timestamp confirms it and
-changes nothing, so filing a photo from 14 March 2006 under `caves/2006` keeps
-its precise time instead of flattening it to January 1st. When a date really is
-replaced, the previous one is kept in `XMP-ArchivePipe:OriginalDate` and the
-before/after pair goes in the decision log — nothing is lost, and you can always
-see what a date used to be.
+You usually run them in that order, one after the other.
 
-### C. I deleted photos in digiKam — and maybe emptied the trash
+---
 
-Deleting in digiKam moves files to `archive/.dtrash`, and each one gets a record
-of the path it came from. That record is what lets reconcile prove a deletion was
-deliberate, so the easy order is:
+### 1. I have new photos to add
+
+**Do this:**
 
 ```bash
-archive maintain reconcile --execute    # adopt the deletions FIRST
-# ...then empty digiKam's trash (Delete → Empty Trash). Safe now, and it
-#    frees real space: the trash sits inside archive/ and syncs with it.
-archive verify                          # still passes; removed files are logged
+archive maintain import --root /path/to/new-photos
+archive review serve            # open http://127.0.0.1:8765, clear the queues
+archive materialize             # shows the plan, writes nothing
+archive materialize --execute   # actually copies them in
+archive verify                  # confirms nothing was lost
 ```
 
-**Already emptied the trash?** Nothing is broken — the evidence is gone, not the
-intent. Reconcile will list those files as *unaccounted* and adopt nothing. Tell
-it they were deliberate:
+**What's happening:** the first command reads the new folder, works out each
+photo's date, and checks it against everything you already have so you don't end
+up with duplicates. It deliberately stops before copying anything, so you get to
+look first. The review step settles anything it wasn't sure about. Then
+`materialize --execute` copies the photos in.
+
+⚠️ **One thing to avoid:** don't point `--root` at a folder that already contains
+photos from your archive. The tool would treat them as brand-new photos and copy
+them in a second time. Keep new, not-yet-imported photos in their own folder,
+separate from anything the archive already knows about.
+
+---
+
+### 2. I moved photos into different folders
+
+Say you noticed some photos are filed under the wrong month, so you dragged them
+into `2005/2005-01/` in digiKam.
+
+**Here's the catch:** moving a photo does **not** change its date. digiKam gets
+dates from information stored *inside* each photo, not from which folder it sits
+in. So the photo looks fixed in that one view, while its date is still wrong
+everywhere else — and it will keep sorting into the wrong place.
+
+These two commands make the move real:
+
+```bash
+# Quit digiKam first — it and this command write the same companion files.
+archive maintain reconcile --execute
+archive maintain apply-sidecars --execute
+```
+
+Then reopen digiKam and choose **Album → Reread Metadata From File** to see the
+corrected dates.
+
+**What folder names mean.** `reconcile` reads the folder you moved a photo into
+and treats it as an instruction:
+
+| You moved a photo into… | …and it means |
+|---|---|
+| `2005/2005-01/` | this photo is from January 2005 |
+| `caves/` | tag this photo `caves` |
+| `caves/2006/` | tag it `caves`, **and** it's from 2006 |
+| `undated/` or `pre-2000/` | I don't know the date; file it loosely |
+
+**It won't make your dates worse.** If a photo already has a precise timestamp —
+say 14 March 2006, 3:42pm — and you file it under `caves/2006`, the folder simply
+*agrees* with what's there, so the exact time is kept rather than being blurred to
+"sometime in 2006". A date is only replaced when the folder genuinely disagrees.
+
+**And you can always look up the old value.** Whenever a date is replaced, the
+previous one is saved in the photo's companion `.xmp` file and written to the
+tool's history log.
+
+---
+
+### 3. I deleted photos I don't want
+
+When you delete a photo in digiKam it isn't really gone — it moves to a hidden
+trash folder inside your archive, and digiKam records where it came from. That
+record is how `reconcile` tells "the owner deleted this on purpose" apart from "a
+file mysteriously vanished", which is exactly the sort of thing you'd want to be
+warned about.
+
+So **reconcile first, empty the trash second**:
+
+```bash
+archive maintain reconcile --execute    # 1. record the deletions
+                                        # 2. now in digiKam: Delete → Empty Trash
+archive verify                          # 3. confirms everything still adds up
+```
+
+Emptying the trash afterwards is worth doing — it sits inside your archive folder
+and can grow to many gigabytes.
+
+**Already emptied the trash? Nothing is broken.** The records are gone, but you
+still know you meant to delete those photos. Say so:
 
 ```bash
 archive maintain reconcile --adopt-unaccounted --execute
 ```
 
-Once adopted, a deleted file is recorded as `removed`: dated, logged, and no
-longer expected on disk, so `verify` keeps passing forever after.
+Either way, deleted photos are marked as deliberately removed, and `verify` keeps
+passing.
 
-### D. I moved whole folders out of `archive/`
+---
 
-Those files still exist, so calling them deleted would be a lie. Point reconcile
-at where they went and they're recorded as *exported*, along with the location
-each was found at:
+### 4. I moved a whole folder out of the archive
+
+Sometimes you decide a batch of photos doesn't belong in the archive at all, and
+drag the folder somewhere else. Those photos **still exist**, so recording them
+as deleted would be untrue. Tell the tool where they went:
 
 ```bash
 archive maintain reconcile --exported-to /where/you/moved/them --execute
 ```
 
-Afterwards, remember rule A: never `maintain import --root` that same path, or
-the exported files come straight back into the archive.
+It finds them there and notes their new home, so the records stay honest about
+where every photo ended up.
+
+⚠️ Afterwards, don't run `maintain import --root` on that folder — see task 1. It
+would pull those photos straight back into the archive you just took them out of.
 
 ---
 
-If reconcile ever reports files as **unaccounted**, it has adopted nothing for
-them — that is the conservation law refusing to guess. They are listed in
-`reports/reconcile_drift.csv`; find out whether they were moved out or deleted,
-then re-run with `--exported-to` or `--adopt-unaccounted` accordingly.
+### If it says "unaccounted"
 
-## Working-tree layout
+Sometimes `reconcile` reports that photos are **unaccounted for**: they're missing
+from the archive and it can't tell why. When that happens it changes nothing and
+waits for you — it would rather ask than guess about your photos.
+
+The missing files are listed in `reports/reconcile_drift.csv`. Look at a few,
+work out what happened, and run the matching command:
+
+- **You moved them somewhere** → `reconcile --exported-to /that/place --execute`
+- **You deleted them** (and emptied the trash) → `reconcile --adopt-unaccounted --execute`
+- **Neither?** Then something really is wrong. Restore those files from your
+  backup before doing anything else.
+
+---
+
+## Looking after your archive
+
+### Browse it in digiKam
+
+[digiKam](https://www.digikam.org) is a free photo manager. Point a digiKam
+collection at your `archive/` folder — that folder only — then set it up so it
+reads what this tool wrote and never damages your files.
+
+In **Settings → Configure digiKam → Metadata**:
+
+**Sidecars tab**
+- ✅ **Enable "Read from sidecar files."** Without this, digiKam shows no dates or
+  tags at all for videos and RAW files, because theirs live in companion files.
+- ❌ **Leave "Sidecar file names are compatible with commercial programs"
+  unchecked.** This tool writes `photo.jpg.xmp`; ticking that box makes digiKam
+  look for `photo.xmp` and miss every one of them.
+- ✅ **Enable "Write to sidecar files"** and choose **"Write to XMP sidecar
+  only."** Now every tag, rating and face you add goes into a companion file and
+  never rewrites the photo — so your archive stays byte-for-byte intact, `verify`
+  keeps passing, and a synced folder isn't constantly re-uploading photos.
+
+**Rotation tab**
+- ✅ Choose **"Rotate by only setting a flag"**, not "changing the content".
+
+**Also**
+- Keep digiKam's **own database on your local drive, never inside the archive**
+  and never in a synced folder — a live database will corrupt if two machines
+  touch it.
+- Prefer **tags, ratings, labels, faces and saved searches** over moving files
+  around. A photo lives in one folder but can carry any number of tags, and
+  tagging never rewrites the photo. Moving and deleting are still perfectly fine —
+  just run `maintain reconcile` afterwards, per [Everyday tasks](#everyday-tasks).
+- Leave `catalog.db` alone. It's the tool's record of everything and is still
+  needed by `maintain import` and `verify`.
+- digiKam's own duplicate finder makes a good independent second opinion on the
+  deduplication.
+
+### Keep the archive somewhere else
+
+You can move `archive/` anywhere — a bigger drive, a synced folder. The tool
+still expects to find it at `<working-folder>/archive`, so leave a signpost
+rather than copying it:
+
+```bash
+ln -s /wherever/you/moved/archive /path/to/archive-project/archive
+```
+
+### Back it up
+
+Keep three copies of `archive/`, `catalog.db` and `reports/` on at least two
+kinds of storage, one of them off-site (restic and borg are good tools for this).
+Re-check that nothing has quietly rotted, now and then:
+
+```bash
+archive maintain verify-checksums
+```
+
+### Reclaim the quarantine space — carefully
+
+This is the one command that permanently destroys files: the set-aside duplicates,
+often hundreds of gigabytes. Do it only when **`verify` passes** and **a real
+backup of your originals exists** — that backup, not the quarantine, is your
+safety net afterwards.
+
+It refuses unless the last `verify` passed, lists exactly what it will destroy,
+and makes you type `PURGE QUARANTINE`:
+
+```bash
+archive maintain purge-quarantine
+```
+
+If the prompt won't take your typing (some terminals), pipe it in:
+
+```bash
+echo "PURGE QUARANTINE" | archive maintain purge-quarantine
+```
+
+It leaves a marker behind so later checks know the quarantine was emptied
+deliberately and don't report it as damage. There's no rush — waiting six months
+is a perfectly good plan.
+
+---
+
+## What's in the working folder
 
 ```
 archive-project/
-  catalog.db        single source of truth (SQLite)
-  config.toml       all your settings and overrides
-  archive/          the canonical output: YYYY/YYYY-MM/<name>__<hash>.<ext>
-                    (+ a .xmp sidecar beside videos, RAW, and any file whose
-                     metadata couldn't be written in place)
-  quarantine/       losers, kept byte-identical, until you purge
-                    (.purged.json marks a completed purge)
-  reports/          manifests, audit samples, verify report (CSV/JSON)
-  logs/             structured run logs (JSONL)
-  staging/          extracted Takeout zips (pipeline-owned)
+  catalog.db        the record of every file and every decision (SQLite)
+  config.toml       all your settings
+  archive/          the result: YYYY/YYYY-MM/<name>__<fingerprint>.<ext>
+                    (+ a .xmp companion beside videos, RAW, and any file
+                     whose metadata couldn't safely be written inside)
+  quarantine/       the duplicate copies, kept byte-for-byte, until you purge
+  reports/          manifests, spot-check samples, verify results (CSV/JSON)
+  review/           thumbnails for the review app
+  logs/             detailed run logs
+  staging/          unzipped Takeout exports
 ```
+
+Every photo filename ends in `__` plus a short fingerprint of its contents. That's
+what lets the tool recognize a file after you've moved it, and guarantees two
+different photos never collide over one name.
+
+---
 
 ## Development
 
@@ -413,5 +561,5 @@ archive-project/
 poetry run pytest          # test suite
 poetry run ruff check src tests
 poetry run mypy
-poetry run archive fixtures generate --dest /tmp/corpus   # synthetic test corpus
+poetry run archive fixtures generate --dest /tmp/corpus   # synthetic test photos
 ```
