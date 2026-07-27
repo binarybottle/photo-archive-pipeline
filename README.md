@@ -243,35 +243,10 @@ missing, altered, or unaccounted for.
     handy independent second audit of the dedup.
   - Leave `catalog.db` alone; it's the pipeline's ledger, still needed by
     `maintain import` and `verify`.
-- **Moved or deleted things in digiKam? Reconcile.** Curating in the photo
-  manager is expected and safe — the pipeline never fights you for the tree —
-  but the catalog then describes folders that no longer exist, and `verify`
-  fills with discrepancies until you tell it what happened:
-  ```bash
-  archive maintain reconcile                 # dry run: explains every difference
-  archive maintain reconcile --execute       # adopt it (catalog only, no file touched)
-  ```
-  Deletions are confirmed against digiKam's `.dtrash` records, so **reconcile
-  before you empty digiKam's trash**. If you already emptied it, the evidence is
-  gone but the intent was not — re-run with `--adopt-unaccounted` to record those
-  files as deliberately removed.
-- **Make folder moves mean something.** Dragging a photo into a different
-  `YYYY-MM` folder does *not* change its date on its own: digiKam reads dates
-  from metadata, not from the path. Reconcile reads each destination folder as
-  an instruction — a date folder corrects the date, `caves/` becomes the keyword
-  `caves`, `caves/2006` does both, and `undated`/`pre-2000`/`2004-2006` file
-  coarsely — and then:
-  ```bash
-  archive maintain apply-sidecars            # dry run
-  archive maintain apply-sidecars --execute  # write name.ext.xmp, image bytes untouched
-  ```
-  Close digiKam first so it isn't writing the same sidecars, then use **Album →
-  Reread Metadata From File** to pick the changes up. A folder date that already
-  agrees with the photo's timestamp leaves that precise timestamp alone rather
-  than flattening it to the 1st of the month; when a date *is* replaced, the old
-  one is kept in `XMP-ArchivePipe:OriginalDate` and in the decision log. Re-run
-  both commands after any later round of curation — nothing happens
-  automatically, and both are safe to repeat.
+- **Moved, renamed, or deleted things in digiKam?** That's expected and safe —
+  the pipeline never fights you for the tree — but you then run
+  `maintain reconcile` so the catalog keeps up. See
+  [Routine tasks](#routine-tasks) below for the exact steps.
 - **Moving `archive/` out of the working tree?** You can keep the archive
   anywhere (a bigger drive, a synced folder). The pipeline's `verify` / `report`
   / `maintain` still expect it *at* `<working-tree>/archive`, so point them back
@@ -284,12 +259,8 @@ missing, altered, or unaccounted for.
   ```bash
   archive maintain verify-checksums
   ```
-- **Add new photos later:**
-  ```bash
-  archive maintain import --root /path/to/new-photos
-  ```
-  then review and `materialize` as usual. Byte-identical newcomers never displace
-  what's already archived.
+- **Add new photos, or make your digiKam edits stick:** see
+  [Routine tasks](#routine-tasks) below.
 - **Reclaim quarantine space — carefully:** this permanently deletes the
   quarantined duplicates (often hundreds of GB), so do it only once `verify`
   passes and a **verbatim backup of your originals exists** — that backup, not
@@ -308,6 +279,85 @@ missing, altered, or unaccounted for.
   `maintain verify-checksums` runs know the quarantine was emptied on purpose and
   skip those file checks. (The built-in prompt also suggests waiting ~6 months if
   you'd rather keep the safety net local for a while.)
+
+## Routine tasks
+
+Two things come up over and over once the archive is live. Neither happens
+automatically — the pipeline is a batch tool, not a daemon — so run these when
+you want the catalog to catch up with what you did.
+
+Every command below is a **dry run until you add `--execute`**, and every one is
+safe to run twice.
+
+### A. I want to import a new batch of photos
+
+```bash
+archive maintain import --root /path/to/new-photos    # ingest + date + dedup
+archive review serve                                  # resolve anything ambiguous
+archive materialize                                   # dry run: see the plan
+archive materialize --execute                         # copy into archive/
+archive verify                                        # prove nothing was lost
+```
+
+`maintain import` reads the new folder, dates each file, and dedups it against
+what you already have; byte-identical newcomers never displace what's archived.
+It stops short of copying so you can review first — check
+`reports/date_audit_sample.csv` and the review queue, then materialize.
+
+**Do not point `--root` at a folder inside your existing source root, or at
+anything holding files the pipeline already archived** (including files you
+exported *out* of `archive/`). They would be ingested a second time under a new
+source id and re-materialized back into the archive. Keep exported and
+still-to-import material in separate places.
+
+### B. I moved photos around in digiKam and want the moves to count
+
+Dragging a photo into a different `YYYY-MM` folder does **not** change its date
+on its own — digiKam reads dates from metadata, not from the path. Two commands
+make it real:
+
+```bash
+# 1. Quit digiKam first (it writes the same .xmp files).
+archive maintain reconcile                  # dry run: explains every difference
+archive maintain reconcile --execute        # adopt it — catalog only, no file touched
+archive maintain apply-sidecars --execute   # write the dates/keywords into .xmp
+archive verify                              # back to a clean proof
+```
+
+Then in digiKam: **Album → Reread Metadata From File** to see the changes.
+
+Reconcile reads each destination folder as an instruction:
+
+| You moved a photo into | It means |
+|---|---|
+| `2005/2005-01/` | date corrected to January 2005 |
+| `caves/` | keyword `caves` |
+| `caves/2006/` | keyword `caves` **and** year 2006 |
+| `undated/`, `pre-2000/`, `2004-2006/` | filed coarsely, no date asserted |
+
+A folder date that already *agrees* with the photo's timestamp confirms it and
+changes nothing, so filing a photo from 14 March 2006 under `caves/2006` keeps
+its precise time instead of flattening it to January 1st. When a date really is
+replaced, the previous one is kept in `XMP-ArchivePipe:OriginalDate` and the
+before/after pair goes in the decision log — nothing is lost, and you can always
+see what a date used to be.
+
+**Deletions:** reconcile confirms them against digiKam's `.dtrash` records, so
+**reconcile before you empty digiKam's trash**. If you already emptied it, add
+`--adopt-unaccounted` to record those files as deliberately deleted.
+
+**Whole folders moved out of `archive/`:** those files still exist, so calling
+them deleted would be a lie. Point reconcile at where they went and they're
+recorded as *exported*, with the location they were found at:
+
+```bash
+archive maintain reconcile --exported-to /where/you/moved/them --execute
+```
+
+If reconcile ever reports files as **unaccounted**, it has adopted nothing for
+them — that is the conservation law refusing to guess. Find them (they are
+listed in `reports/reconcile_drift.csv`) and re-run with `--exported-to` or
+`--adopt-unaccounted` once you know which it was.
 
 ## Working-tree layout
 

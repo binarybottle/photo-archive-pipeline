@@ -14,8 +14,10 @@ any (via the CLI). A machine-readable report lands in
 ``archive report``.
 
 A ``removed`` placement is one ``maintain reconcile`` adopted after the user
-deleted the file in a photo manager: dated and logged, so the file's fate is
-still provable, and expected to be absent from disk. That manager's own files
+deleted the file in a photo manager, and an ``exported`` one is a file they moved
+out of the archive but kept: both are dated and logged, so the file's fate is
+still provable, and both are expected to be absent from disk. That manager's own
+files
 (its trash subtree, ``.DS_Store``, its uuid marker) are not archive contents and
 are skipped rather than reported as orphans — see ``[reconcile]`` in config.toml.
 
@@ -48,10 +50,12 @@ from archive_pipeline.workingtree import WorkingTree
 VERIFY_REPORT = "verify_report.json"
 PURGED_MARKER = ".purged.json"
 
-_VALID_DISPOSITIONS = frozenset({"archive", "quarantine", "excluded", "removed"})
+_VALID_DISPOSITIONS = frozenset(
+    {"archive", "quarantine", "excluded", "removed", "exported"}
+)
 
-#: Dispositions that deliberately have no file on disk to check.
-_FILELESS_DISPOSITIONS = frozenset({"excluded", "removed"})
+#: Dispositions that deliberately have no file under the working tree.
+_FILELESS_DISPOSITIONS = frozenset({"excluded", "removed", "exported"})
 _MAX_ENUMERATED = 1000  # cap stored discrepancy details; the count is exact
 
 
@@ -81,6 +85,7 @@ class VerifyResult:
     quarantine_checked: int = 0
     excluded_count: int = 0
     removed_count: int = 0
+    exported_count: int = 0
     bytes_archive: int = 0
     bytes_quarantine: int = 0
     discrepancy_count: int = 0
@@ -156,8 +161,10 @@ def run_verify(
         if disposition in _FILELESS_DISPOSITIONS:
             if disposition == "excluded":
                 result.excluded_count += 1
-            else:
+            elif disposition == "removed":
                 result.removed_count += 1
+            else:
+                result.exported_count += 1
             continue
         if not row["dest_rel_path"] or not row["dest_sha256"]:
             result.add(
@@ -261,6 +268,7 @@ def _write_report(
             "quarantine_checked": result.quarantine_checked,
             "excluded": result.excluded_count,
             "removed": result.removed_count,
+            "exported": result.exported_count,
             "bytes_archive": result.bytes_archive,
             "bytes_quarantine": result.bytes_quarantine,
             "discrepancies": result.discrepancy_count,

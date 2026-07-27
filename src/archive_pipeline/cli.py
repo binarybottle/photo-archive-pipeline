@@ -476,9 +476,10 @@ def _run_verify_command(ctx: typer.Context, checksums_only: bool) -> None:
         f" bytes); {result.excluded_count} excluded; {result.placements_total}"
         f"/{result.instances_total} instances placed."
     )
-    if result.removed_count:
+    if result.removed_count or result.exported_count:
         typer.echo(
-            f"{result.removed_count} file(s) deliberately removed after archiving"
+            f"{result.removed_count} file(s) deliberately removed and"
+            f" {result.exported_count} moved out of the archive after archiving"
             " (adopted by `maintain reconcile`); no file expected on disk."
         )
     if result.quarantine_purged:
@@ -607,6 +608,14 @@ def maintain_reconcile(
     execute: Annotated[
         bool, typer.Option("--execute", help="Adopt the changes (default: dry run).")
     ] = False,
+    exported_to: Annotated[
+        Path | None,
+        typer.Option(
+            "--exported-to",
+            help="Search this path for files moved OUT of the archive and record"
+            " them as exported (still exist) rather than deleted.",
+        ),
+    ] = None,
     adopt_unaccounted: Annotated[
         bool,
         typer.Option(
@@ -628,11 +637,13 @@ def maintain_reconcile(
     try:
         with record_run(
             conn, "reconcile",
-            {"execute": execute, "adopt_unaccounted": adopt_unaccounted},
+            {"execute": execute, "adopt_unaccounted": adopt_unaccounted,
+             "exported_to": str(exported_to) if exported_to else None},
         ):
             plan = run_reconcile(
                 conn, cfg, wt, log, execute=execute,
                 adopt_unaccounted=adopt_unaccounted,
+                exported_to=exported_to.expanduser().resolve() if exported_to else None,
             )
     except ReconcileError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
@@ -653,13 +664,19 @@ def maintain_reconcile(
         f"{len(plan.removals)} deletion(s) confirmed from the photo manager's trash;"
         f" {len(plan.restorations)} restored; {plan.ignored} of its own file(s) ignored."
     )
+    if plan.exports:
+        typer.echo(
+            f"{len(plan.exports)} file(s) moved out of the archive but still present"
+            " at the search path — recorded as exported, not deleted."
+        )
     if plan.new_sidecars:
         typer.echo(f"{len(plan.new_sidecars)} sidecar(s) written by the photo manager.")
     if plan.unaccounted:
         typer.secho(
             f"WARNING: {len(plan.unaccounted)} recorded file(s) are gone with no"
             " counterpart on disk and no trash record — nothing was adopted for these."
-            "\nIf you emptied the photo manager's trash, re-run with"
+            "\nIf you moved them out of the archive, point --exported-to at where"
+            " they went. If you emptied the photo manager's trash, re-run with"
             " --adopt-unaccounted to record them as deliberate deletions.",
             fg=typer.colors.YELLOW, err=True,
         )

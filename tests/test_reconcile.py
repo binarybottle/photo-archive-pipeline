@@ -192,6 +192,65 @@ def test_emptied_trash_still_reconciles_when_asked(env: PipelineEnv) -> None:
     assert detail["confirmed_by"] == "absence"
 
 
+def test_files_moved_out_of_the_archive_are_exported_not_deleted(
+    env: PipelineEnv, tmp_path: Path
+) -> None:
+    """A folder moved out of the archive still exists; saying "deleted" would lie."""
+    instance_id, rel = _archived(env, 1)[0]
+    elsewhere = tmp_path / "topical"
+    elsewhere.mkdir()
+    shutil.move(str(env.wt.archive_dir / rel), str(elsewhere / Path(rel).name))
+
+    plan = run_reconcile(
+        env.conn, env.cfg, env.wt, LOG, execute=True, exported_to=elsewhere
+    )
+    assert [e.instance_id for e in plan.exports] == [instance_id]
+    assert plan.unaccounted == []
+    assert plan.removals == []
+    assert env.conn.execute(
+        "SELECT disposition FROM placement WHERE instance_id = ?", (instance_id,)
+    ).fetchone()[0] == "exported"
+
+    detail = json.loads(env.conn.execute(
+        "SELECT detail FROM decision WHERE subject = ? AND rule = 'reconcile.exported'",
+        (f"instance:{instance_id}",),
+    ).fetchone()[0])
+    assert detail["found_at"] == str((elsewhere / Path(rel).name).resolve())
+
+    result = run_verify(env.conn, env.wt, LOG, cfg=env.cfg)
+    assert result.passed, [(d.kind, d.subject) for d in result.discrepancies[:5]]
+    assert result.exported_count == 1
+
+
+def test_export_search_ignores_the_archive_itself(env: PipelineEnv) -> None:
+    """A search path containing the archive must not match a file against itself."""
+    _, rel = _archived(env, 1)[0]
+    (env.wt.archive_dir / rel).unlink()
+
+    plan = run_reconcile(
+        env.conn, env.cfg, env.wt, LOG, execute=False, exported_to=env.wt.root
+    )
+    assert plan.exports == []
+    assert [r.rel for r in plan.unaccounted] == [rel]
+
+
+def test_export_takes_precedence_over_adopting_as_deleted(
+    env: PipelineEnv, tmp_path: Path
+) -> None:
+    """A file that still exists is never written down as destroyed."""
+    instance_id, rel = _archived(env, 1)[0]
+    elsewhere = tmp_path / "topical"
+    elsewhere.mkdir()
+    shutil.move(str(env.wt.archive_dir / rel), str(elsewhere / Path(rel).name))
+
+    plan = run_reconcile(
+        env.conn, env.cfg, env.wt, LOG, execute=True,
+        exported_to=elsewhere, adopt_unaccounted=True,
+    )
+    assert [e.instance_id for e in plan.exports] == [instance_id]
+    assert plan.removals == []
+
+
 def test_verify_passes_after_the_trash_is_emptied(env: PipelineEnv) -> None:
     """Adopted deletions stay proven once digiKam's trash is gone."""
     _, rel = _archived(env, 1)[0]

@@ -18,6 +18,11 @@ from the ledger, and writes the explanation back into the catalog:
   disk becomes ``disposition = 'removed'``, dated, and logged. digiKam's
   ``.dtrash`` records the original path of everything it deleted, so a deletion
   is confirmed rather than guessed whenever the trash is still present.
+* **Exports** — a file moved *out* of the archive entirely (the user decides a
+  whole topical folder belongs somewhere else) is not a deletion: it still
+  exists. Given ``exported_to``, reconcile looks for the vanished files under
+  that path and records ``disposition = 'exported'`` with the location it found
+  them at, so the ledger can still say where every original ended up.
 * **Everything else** — new ``.xmp`` sidecars the photo manager wrote, and its
   own bookkeeping files, are recognized as expected rather than flagged.
 
@@ -112,12 +117,22 @@ class Removal:
     trashed_as: str | None
 
 
+@dataclass(frozen=True)
+class Export:
+    """One archived file the user moved out of the archive but kept."""
+
+    instance_id: int
+    rel: str
+    found_at: str  # absolute path it was located at
+
+
 @dataclass
 class ReconcilePlan:
     """Every difference between the ledger and the archive, explained."""
 
     moves: list[Move] = field(default_factory=list)
     removals: list[Removal] = field(default_factory=list)
+    exports: list[Export] = field(default_factory=list)
     restorations: list[Removal] = field(default_factory=list)
     unaccounted: list[Removal] = field(default_factory=list)
     new_sidecars: list[str] = field(default_factory=list)
@@ -148,6 +163,7 @@ class ReconcilePlan:
         return not (
             self.moves
             or self.removals
+            or self.exports
             or self.restorations
             or self.unaccounted
             or self.unknown_media
@@ -256,6 +272,40 @@ def read_trash(wt: WorkingTree) -> dict[str, str]:
 # --- Planning -------------------------------------------------------------------
 
 
+def find_exported(
+    unaccounted: list[Removal], exported_to: Path, wt: WorkingTree
+) -> tuple[list[Export], list[Removal]]:
+    """Split vanished files into those found under ``exported_to`` and the rest.
+
+    Archive filenames carry an ``__<sha8>`` stamp, so a basename match outside
+    the archive identifies a file that was moved out rather than destroyed. The
+    archive itself is excluded from the search so a path that merely contains it
+    cannot match a file against itself.
+
+    Usage:
+        >>> gone = plan.unaccounted
+        >>> found, missing = find_exported(gone, Path("/photos"), wt)  # doctest: +SKIP
+    """
+    archive_root = wt.archive_dir.resolve()
+    by_name: dict[str, str] = {}
+    for path in exported_to.rglob("*"):
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved == archive_root or archive_root in resolved.parents:
+            continue
+        by_name.setdefault(path.name, str(resolved))
+    exports: list[Export] = []
+    still_missing: list[Removal] = []
+    for missing in unaccounted:
+        found_at = by_name.get(posixpath.basename(missing.rel))
+        if found_at:
+            exports.append(Export(missing.instance_id, missing.rel, found_at))
+        else:
+            still_missing.append(missing)
+    return exports, still_missing
+
+
 def plan_reconcile(conn: sqlite3.Connection, cfg: Config, wt: WorkingTree) -> ReconcilePlan:
     """Explain every difference between the archive placements and the disk.
 
@@ -287,7 +337,7 @@ def plan_reconcile(conn: sqlite3.Connection, cfg: Config, wt: WorkingTree) -> Re
     # unknown intruder.
     for row in conn.execute(
         "SELECT instance_id, dest_rel_path AS rel FROM placement"
-        " WHERE disposition = 'removed' AND dest_rel_path IS NOT NULL"
+        " WHERE disposition IN ('removed', 'exported') AND dest_rel_path IS NOT NULL"
     ):
         if row["rel"] in on_disk:
             plan.restorations.append(Removal(row["instance_id"], row["rel"], None))
@@ -425,6 +475,18 @@ def apply_reconcile(
                 {"was": removal.rel, "trashed_as": removal.trashed_as,
                  "confirmed_by": "trash" if removal.trashed_as else "absence"},
             )
+        for export in plan.exports:
+            conn.execute(
+                "UPDATE placement SET disposition = 'exported', removed_at = ?"
+                " WHERE instance_id = ?",
+                (now, export.instance_id),
+            )
+            conn.execute("DELETE FROM sidecar_task WHERE instance_id = ?",
+                         (export.instance_id,))
+            _decide(
+                conn, now, f"instance:{export.instance_id}", "reconcile.exported",
+                {"was": export.rel, "found_at": export.found_at},
+            )
         for restored in plan.restorations:
             conn.execute(
                 "UPDATE placement SET disposition = 'archive', removed_at = NULL"
@@ -443,6 +505,7 @@ def apply_reconcile(
             "date_corrections": len(plan.date_corrections),
             "demotions": len(plan.demotions),
             "removals": len(plan.removals),
+            "exports": len(plan.exports),
             "unaccounted": len(plan.unaccounted),
         },
     )
@@ -517,11 +580,18 @@ def run_reconcile(
     log: Logger,
     execute: bool = False,
     adopt_unaccounted: bool = False,
+    exported_to: Path | None = None,
 ) -> ReconcilePlan:
     """Plan (and with ``execute``, adopt) the archive's hand-curation.
 
     Dry-run by default (INV-4): the plan and its reports are produced without
     touching the catalog.
+
+    ``exported_to`` is searched for files that vanished from the archive, and
+    any found there are recorded as exported rather than deleted — the honest
+    answer when a whole folder was moved out of the archive on purpose. It is
+    applied before ``adopt_unaccounted``, so a file that still exists is never
+    written down as destroyed.
 
     ``adopt_unaccounted`` treats files that vanished with no trash record as
     deliberate deletions too. That is the right call after the photo manager's
@@ -533,6 +603,10 @@ def run_reconcile(
         >>> plan = run_reconcile(conn, cfg, wt, log, execute=True)  # doctest: +SKIP
     """
     plan = plan_reconcile(conn, cfg, wt)
+    if exported_to is not None and plan.unaccounted:
+        plan.exports, plan.unaccounted = find_exported(
+            plan.unaccounted, exported_to, wt
+        )
     if adopt_unaccounted:
         plan.removals.extend(plan.unaccounted)
         plan.unaccounted = []
@@ -559,6 +633,7 @@ def write_reports(wt: WorkingTree, plan: ReconcilePlan) -> None:
             "date_demotions": len(plan.demotions),
             "keyword_moves": len(plan.keyword_moves),
             "removals": len(plan.removals),
+            "exports": len(plan.exports),
             "restorations": len(plan.restorations),
             "unaccounted": len(plan.unaccounted),
             "new_sidecars": len(plan.new_sidecars),
@@ -589,6 +664,10 @@ def write_reports(wt: WorkingTree, plan: ReconcilePlan) -> None:
         for removal in plan.removals:
             writer.writerow(
                 ["removed", removal.rel, removal.trashed_as or "", "", "", "", "", "", ""]
+            )
+        for export in plan.exports:
+            writer.writerow(
+                ["exported", export.rel, export.found_at, "", "", "", "", "", ""]
             )
         for restored in plan.restorations:
             writer.writerow(["restored", restored.rel, restored.rel, "", "", "", "", "", ""])
