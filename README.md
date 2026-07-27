@@ -282,12 +282,17 @@ missing, altered, or unaccounted for.
 
 ## Routine tasks
 
-Two things come up over and over once the archive is live. Neither happens
-automatically — the pipeline is a batch tool, not a daemon — so run these when
-you want the catalog to catch up with what you did.
+A handful of things come up over and over once the archive is live:
 
-Every command below is a **dry run until you add `--execute`**, and every one is
-safe to run twice.
+- [A. Import a new batch of photos](#a-i-want-to-import-a-new-batch-of-photos)
+- [B. Make digiKam folder moves count](#b-i-moved-photos-around-in-digikam-and-want-the-moves-to-count)
+- [C. Delete photos, and empty digiKam's trash](#c-i-deleted-photos-in-digikam--and-maybe-emptied-the-trash)
+- [D. Move whole folders out of the archive](#d-i-moved-whole-folders-out-of-archive)
+
+None of it happens automatically — the pipeline is a batch tool, not a daemon —
+so run these when you want the catalog to catch up with what you did. Every
+command below is a **dry run until you add `--execute`**, and every one is safe
+to run twice.
 
 ### A. I want to import a new batch of photos
 
@@ -342,22 +347,49 @@ replaced, the previous one is kept in `XMP-ArchivePipe:OriginalDate` and the
 before/after pair goes in the decision log — nothing is lost, and you can always
 see what a date used to be.
 
-**Deletions:** reconcile confirms them against digiKam's `.dtrash` records, so
-**reconcile before you empty digiKam's trash**. If you already emptied it, add
-`--adopt-unaccounted` to record those files as deliberately deleted.
+### C. I deleted photos in digiKam — and maybe emptied the trash
 
-**Whole folders moved out of `archive/`:** those files still exist, so calling
-them deleted would be a lie. Point reconcile at where they went and they're
-recorded as *exported*, with the location they were found at:
+Deleting in digiKam moves files to `archive/.dtrash`, and each one gets a record
+of the path it came from. That record is what lets reconcile prove a deletion was
+deliberate, so the easy order is:
+
+```bash
+archive maintain reconcile --execute    # adopt the deletions FIRST
+# ...then empty digiKam's trash (Delete → Empty Trash). Safe now, and it
+#    frees real space: the trash sits inside archive/ and syncs with it.
+archive verify                          # still passes; removed files are logged
+```
+
+**Already emptied the trash?** Nothing is broken — the evidence is gone, not the
+intent. Reconcile will list those files as *unaccounted* and adopt nothing. Tell
+it they were deliberate:
+
+```bash
+archive maintain reconcile --adopt-unaccounted --execute
+```
+
+Once adopted, a deleted file is recorded as `removed`: dated, logged, and no
+longer expected on disk, so `verify` keeps passing forever after.
+
+### D. I moved whole folders out of `archive/`
+
+Those files still exist, so calling them deleted would be a lie. Point reconcile
+at where they went and they're recorded as *exported*, along with the location
+each was found at:
 
 ```bash
 archive maintain reconcile --exported-to /where/you/moved/them --execute
 ```
 
+Afterwards, remember rule A: never `maintain import --root` that same path, or
+the exported files come straight back into the archive.
+
+---
+
 If reconcile ever reports files as **unaccounted**, it has adopted nothing for
-them — that is the conservation law refusing to guess. Find them (they are
-listed in `reports/reconcile_drift.csv`) and re-run with `--exported-to` or
-`--adopt-unaccounted` once you know which it was.
+them — that is the conservation law refusing to guess. They are listed in
+`reports/reconcile_drift.csv`; find out whether they were moved out or deleted,
+then re-run with `--exported-to` or `--adopt-unaccounted` accordingly.
 
 ## Working-tree layout
 
