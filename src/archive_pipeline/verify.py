@@ -2,7 +2,8 @@
 
 INV-3, proven on disk rather than trusted from bookkeeping: every instance in
 the source inventory must be locatable in exactly one of archive, quarantine,
-or the intentionally-excluded set. Concretely: every instance has exactly one
+the intentionally-excluded set, or — once the archive is being curated by hand —
+the set the user deliberately removed. Concretely: every instance has exactly one
 placement; every archive placement's destination exists and re-hashes to its
 recorded post-metadata-write SHA-256; every quarantine placement's destination
 exists and re-hashes to the *source* SHA-256 (byte identity is the quarantine
@@ -11,6 +12,12 @@ know about. Discrepancies are enumerated exactly and the run exits nonzero on
 any (via the CLI). A machine-readable report lands in
 ``reports/verify_report.json`` alongside the statistics used by
 ``archive report``.
+
+A ``removed`` placement is one ``maintain reconcile`` adopted after the user
+deleted the file in a photo manager: dated and logged, so the file's fate is
+still provable, and expected to be absent from disk. That manager's own files
+(its trash subtree, ``.DS_Store``, its uuid marker) are not archive contents and
+are skipped rather than reported as orphans — see ``[reconcile]`` in config.toml.
 
 A purged quarantine (see ``maintain purge-quarantine``) is recorded by a
 marker file; verify then skips quarantine file checks and reports the purge
@@ -33,6 +40,7 @@ from logging import Logger
 from pathlib import Path
 from typing import Any
 
+from archive_pipeline.config import Config
 from archive_pipeline.hashing import sha256_file
 from archive_pipeline.materialize import QUARANTINE_INDEX
 from archive_pipeline.workingtree import WorkingTree
@@ -40,7 +48,10 @@ from archive_pipeline.workingtree import WorkingTree
 VERIFY_REPORT = "verify_report.json"
 PURGED_MARKER = ".purged.json"
 
-_VALID_DISPOSITIONS = frozenset({"archive", "quarantine", "excluded"})
+_VALID_DISPOSITIONS = frozenset({"archive", "quarantine", "excluded", "removed"})
+
+#: Dispositions that deliberately have no file on disk to check.
+_FILELESS_DISPOSITIONS = frozenset({"excluded", "removed"})
 _MAX_ENUMERATED = 1000  # cap stored discrepancy details; the count is exact
 
 
@@ -69,6 +80,7 @@ class VerifyResult:
     archive_checked: int = 0
     quarantine_checked: int = 0
     excluded_count: int = 0
+    removed_count: int = 0
     bytes_archive: int = 0
     bytes_quarantine: int = 0
     discrepancy_count: int = 0
@@ -86,16 +98,19 @@ def run_verify(
     wt: WorkingTree,
     log: Logger,
     checksums_only: bool = False,
+    cfg: Config | None = None,
 ) -> VerifyResult:
     """Run the conservation + checksum verification; write the JSON report.
 
     ``checksums_only=True`` (the cron-able ``maintain verify-checksums``)
     re-hashes archive and quarantine against the ledger but skips the
-    inventory-completeness pass.
+    inventory-completeness pass. ``cfg`` supplies the ``[reconcile]`` ignore
+    lists; the defaults are used when it is omitted.
 
     Usage:
         >>> result = run_verify(conn, wt, log)  # doctest: +SKIP
     """
+    cfg = cfg or Config()
     result = VerifyResult(checksums_only=checksums_only)
     result.quarantine_purged = (wt.quarantine_dir / PURGED_MARKER).exists()
 
@@ -138,8 +153,11 @@ def run_verify(
         if disposition not in _VALID_DISPOSITIONS:
             result.add("invalid_disposition", subject, f"disposition={disposition!r}")
             continue
-        if disposition == "excluded":
-            result.excluded_count += 1
+        if disposition in _FILELESS_DISPOSITIONS:
+            if disposition == "excluded":
+                result.excluded_count += 1
+            else:
+                result.removed_count += 1
             continue
         if not row["dest_rel_path"] or not row["dest_sha256"]:
             result.add(
@@ -179,7 +197,7 @@ def run_verify(
             result.quarantine_checked += 1
             result.bytes_quarantine += path.stat().st_size
 
-    _orphan_scan(result, wt, placements)
+    _orphan_scan(result, wt, cfg, placements)
     _write_report(conn, wt, result)
     log.info(
         "verification " + ("passed" if result.passed else "FAILED"),
@@ -196,7 +214,7 @@ def run_verify(
 
 
 def _orphan_scan(
-    result: VerifyResult, wt: WorkingTree, placements: list[sqlite3.Row]
+    result: VerifyResult, wt: WorkingTree, cfg: Config, placements: list[sqlite3.Row]
 ) -> None:
     """Anything on disk the ledger doesn't account for is a discrepancy."""
     archive_known: set[str] = set()
@@ -210,6 +228,8 @@ def _orphan_scan(
             archive_known.add(row["dest_rel_path"] + ".xmp")
         elif row["disposition"] == "quarantine":
             quarantine_known.add(row["dest_rel_path"])
+    ignore_dirs = set(cfg.reconcile.ignore_dirs)
+    ignore_names = set(cfg.reconcile.ignore_names)
     for base, known, kind in (
         (wt.archive_dir, archive_known, "orphan_in_archive"),
         (wt.quarantine_dir, quarantine_known, "orphan_in_quarantine"),
@@ -217,10 +237,13 @@ def _orphan_scan(
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*")):
-            if path.is_file():
-                rel = path.relative_to(base).as_posix()
-                if rel not in known:
-                    result.add(kind, rel, "file on disk without a placement record")
+            if not path.is_file() or path.name in ignore_names:
+                continue
+            rel = path.relative_to(base).as_posix()
+            if rel.split("/", 1)[0] in ignore_dirs:
+                continue
+            if rel not in known:
+                result.add(kind, rel, "file on disk without a placement record")
 
 
 def _write_report(
@@ -237,6 +260,7 @@ def _write_report(
             "archive_checked": result.archive_checked,
             "quarantine_checked": result.quarantine_checked,
             "excluded": result.excluded_count,
+            "removed": result.removed_count,
             "bytes_archive": result.bytes_archive,
             "bytes_quarantine": result.bytes_quarantine,
             "discrepancies": result.discrepancy_count,

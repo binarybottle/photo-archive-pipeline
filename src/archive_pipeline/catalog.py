@@ -208,6 +208,32 @@ SCHEMA_V9 = """
 CREATE INDEX IF NOT EXISTS idx_cluster_member_instance ON cluster_member(instance_id);
 """
 
+SCHEMA_V10 = """
+-- Stage 8 reconcile: hand-curation of archive/ in an external photo manager
+-- adopted back into the ledger. A file the user deleted after materialization
+-- gets disposition 'removed' (a deliberate, dated, logged fourth outcome
+-- alongside archive/quarantine/excluded), and topical folders they filed into
+-- become keywords destined for XMP sidecars.
+ALTER TABLE placement ADD COLUMN removed_at TEXT;
+
+CREATE TABLE manual_keyword (
+  instance_id INTEGER NOT NULL REFERENCES instance(id),
+  keyword TEXT NOT NULL,
+  origin TEXT NOT NULL,             -- 'folder_move:<archive-relative path>'
+  added TEXT NOT NULL,
+  PRIMARY KEY (instance_id, keyword)
+);
+
+-- Curation that has been adopted into the catalog but not yet written out to
+-- the file's XMP sidecar; written_at makes the write resumable and idempotent.
+CREATE TABLE sidecar_task (
+  instance_id INTEGER PRIMARY KEY REFERENCES instance(id),
+  reason TEXT NOT NULL,             -- date | keywords | date+keywords
+  queued TEXT NOT NULL,
+  written_at TEXT
+);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "initial schema (spec section 7)", SCHEMA_V1),
     Migration(2, "instance.mtime_ns and instance.flags for ingest", SCHEMA_V2),
@@ -218,6 +244,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(7, "date_resolution.bucket for coarse archive buckets", SCHEMA_V7),
     Migration(8, "date_resolution.skipped to hide conflicts from the queue", SCHEMA_V8),
     Migration(9, "index cluster_member(instance_id) for the date-review queue", SCHEMA_V9),
+    Migration(10, "reconcile: removed placements, manual keywords, sidecar tasks",
+              SCHEMA_V10),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

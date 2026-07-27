@@ -146,6 +146,21 @@ class ProvenanceConfig:
 
 
 @dataclass(frozen=True)
+class ReconcileConfig:
+    """Stage 8: adopting an external photo manager's curation of ``archive/``."""
+
+    #: Files belonging to the photo manager or the OS, not to the archive.
+    ignore_names: tuple[str, ...] = (
+        ".DS_Store", "Thumbs.db", "digikam.uuid", ".picasa.ini",
+    )
+    #: Top-level archive subtrees the pipeline does not own (digiKam's trash).
+    ignore_dirs: tuple[str, ...] = (".dtrash",)
+    #: Folders that file coarsely instead of dating; year ranges ("2004-2006")
+    #: are recognized automatically in addition to these.
+    bucket_dirs: tuple[str, ...] = ("pre-2000",)
+
+
+@dataclass(frozen=True)
 class Config:
     """Complete pipeline configuration with spec-stated defaults."""
 
@@ -157,6 +172,7 @@ class Config:
     keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     provenance: ProvenanceConfig = field(default_factory=ProvenanceConfig)
+    reconcile: ReconcileConfig = field(default_factory=ReconcileConfig)
 
 
 def _build_section(cls: type[Any], name: str, raw: dict[str, Any]) -> Any:
@@ -276,4 +292,12 @@ parallelism = 0        # 0 = use all CPUs
 threshold = 0.5
 curated_overrides = []
 takeout_derived_overrides = []
+
+[reconcile]
+# Stage 8: `maintain reconcile` adopts folder moves and deletions you made in a
+# photo manager (digiKam) back into the catalog, so `verify` keeps proving the
+# conservation law over a hand-curated archive.
+ignore_names = [".DS_Store", "Thumbs.db", "digikam.uuid", ".picasa.ini"]
+ignore_dirs = [".dtrash"]     # archive subtrees the pipeline does not own
+bucket_dirs = ["pre-2000"]    # folders that file coarsely; "YYYY-YYYY" is automatic
 """

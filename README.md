@@ -236,12 +236,42 @@ missing, altered, or unaccounted for.
     **"Rotate by only setting a flag"** (lossless), not "changing the content".
   - Put digiKam's **database on your local SSD, not inside the archive** (and
     never inside a synced folder — a live SQLite DB will corrupt/conflict).
-  - Organize with **tags, ratings, labels, faces, and saved searches** — not by
-    moving files. The date-folder tree is the stable physical layout; a photo
-    takes one folder but many tags, and tagging only touches sidecars. Its
-    duplicate finder is also a handy independent second audit of the dedup.
+  - Prefer **tags, ratings, labels, faces, and saved searches** over moving
+    files: a photo takes one folder but many tags, and tagging only touches
+    sidecars. Moving and deleting are still fine — just run `maintain reconcile`
+    afterwards (below) so the catalog keeps up. Its duplicate finder is also a
+    handy independent second audit of the dedup.
   - Leave `catalog.db` alone; it's the pipeline's ledger, still needed by
     `maintain import` and `verify`.
+- **Moved or deleted things in digiKam? Reconcile.** Curating in the photo
+  manager is expected and safe — the pipeline never fights you for the tree —
+  but the catalog then describes folders that no longer exist, and `verify`
+  fills with discrepancies until you tell it what happened:
+  ```bash
+  archive maintain reconcile                 # dry run: explains every difference
+  archive maintain reconcile --execute       # adopt it (catalog only, no file touched)
+  ```
+  Deletions are confirmed against digiKam's `.dtrash` records, so **reconcile
+  before you empty digiKam's trash**. If you already emptied it, the evidence is
+  gone but the intent was not — re-run with `--adopt-unaccounted` to record those
+  files as deliberately removed.
+- **Make folder moves mean something.** Dragging a photo into a different
+  `YYYY-MM` folder does *not* change its date on its own: digiKam reads dates
+  from metadata, not from the path. Reconcile reads each destination folder as
+  an instruction — a date folder corrects the date, `caves/` becomes the keyword
+  `caves`, `caves/2006` does both, and `undated`/`pre-2000`/`2004-2006` file
+  coarsely — and then:
+  ```bash
+  archive maintain apply-sidecars            # dry run
+  archive maintain apply-sidecars --execute  # write name.ext.xmp, image bytes untouched
+  ```
+  Close digiKam first so it isn't writing the same sidecars, then use **Album →
+  Reread Metadata From File** to pick the changes up. A folder date that already
+  agrees with the photo's timestamp leaves that precise timestamp alone rather
+  than flattening it to the 1st of the month; when a date *is* replaced, the old
+  one is kept in `XMP-ArchivePipe:OriginalDate` and in the decision log. Re-run
+  both commands after any later round of curation — nothing happens
+  automatically, and both are safe to repeat.
 - **Moving `archive/` out of the working tree?** You can keep the archive
   anywhere (a bigger drive, a synced folder). The pipeline's `verify` / `report`
   / `maintain` still expect it *at* `<working-tree>/archive`, so point them back

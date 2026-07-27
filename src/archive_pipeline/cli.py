@@ -3,7 +3,8 @@
 All stages are implemented: init, ingest (Stage 0 preserve gate + Stage 1),
 takeout-normalize (2), local-provenance (2b), date-resolve (3), review serve
 (4), dedup (5), materialize (6, dry-run by default), verify/report (7), and
-maintain verify-checksums / import / purge-quarantine (8).
+maintain verify-checksums / import / reconcile / apply-sidecars /
+purge-quarantine (8).
 
 Usage:
     $ archive --working-tree /archive-project init
@@ -37,7 +38,14 @@ from archive_pipeline.materialize import (
     run_materialize,
 )
 from archive_pipeline.provenance import PROVENANCE_REPORT, ProvenanceError, classify_local
+from archive_pipeline.reconcile import (
+    DRIFT_REPORT,
+    RECONCILE_REPORT,
+    ReconcileError,
+    run_reconcile,
+)
 from archive_pipeline.runs import record_run
+from archive_pipeline.sidecars import SidecarError, run_apply_sidecars
 from archive_pipeline.space import SpaceError
 from archive_pipeline.staging import StagingError, stage_takeout_zip
 from archive_pipeline.takeout import UNMATCHED_REPORT, TakeoutError, normalize_takeout
@@ -449,12 +457,13 @@ def materialize(
 
 def _run_verify_command(ctx: typer.Context, checksums_only: bool) -> None:
     wt = _working_tree(ctx)
+    cfg = _load_config_or_exit(wt)
     log = configure_logging(wt.logs_dir, stage="verify")
     conn = open_catalog(wt.catalog_path)
     stage = "maintain-verify-checksums" if checksums_only else "verify"
     try:
         with record_run(conn, stage, {"checksums_only": checksums_only}):
-            result = run_verify(conn, wt, log, checksums_only=checksums_only)
+            result = run_verify(conn, wt, log, checksums_only=checksums_only, cfg=cfg)
     except VerifyError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from exc
@@ -467,6 +476,11 @@ def _run_verify_command(ctx: typer.Context, checksums_only: bool) -> None:
         f" bytes); {result.excluded_count} excluded; {result.placements_total}"
         f"/{result.instances_total} instances placed."
     )
+    if result.removed_count:
+        typer.echo(
+            f"{result.removed_count} file(s) deliberately removed after archiving"
+            " (adopted by `maintain reconcile`); no file expected on disk."
+        )
     if result.quarantine_purged:
         typer.echo("Quarantine was purged; its file checks were skipped.")
     if result.passed:
@@ -584,6 +598,145 @@ def maintain_import(
     typer.echo(
         "Next: resolve any conflicts/clusters in `archive review serve`, then"
         " `archive materialize` (dry-run) and `--execute`."
+    )
+
+
+@maintain_app.command("reconcile")
+def maintain_reconcile(
+    ctx: typer.Context,
+    execute: Annotated[
+        bool, typer.Option("--execute", help="Adopt the changes (default: dry run).")
+    ] = False,
+    adopt_unaccounted: Annotated[
+        bool,
+        typer.Option(
+            "--adopt-unaccounted",
+            help="Also record files that vanished with no trash record as deleted"
+            " (use after emptying the photo manager's trash).",
+        ),
+    ] = False,
+) -> None:
+    """Adopt folder moves and deletions made in a photo manager (Stage 8).
+
+    Dry-run by default (INV-4). Only the catalog is written; no media file is
+    moved, changed, or deleted.
+    """
+    wt = _working_tree(ctx)
+    cfg = _load_config_or_exit(wt)
+    log = configure_logging(wt.logs_dir, stage="reconcile")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(
+            conn, "reconcile",
+            {"execute": execute, "adopt_unaccounted": adopt_unaccounted},
+        ):
+            plan = run_reconcile(
+                conn, cfg, wt, log, execute=execute,
+                adopt_unaccounted=adopt_unaccounted,
+            )
+    except ReconcileError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+
+    if plan.clean:
+        typer.secho("Archive matches the ledger; nothing to reconcile.",
+                    fg=typer.colors.GREEN)
+        return
+    typer.echo(
+        f"{len(plan.moves)} move(s): {len(plan.date_corrections)} date correction(s),"
+        f" {len(plan.demotions)} demoted to a coarse bucket,"
+        f" {len(plan.keyword_moves)} carrying folder keyword(s)."
+    )
+    typer.echo(
+        f"{len(plan.removals)} deletion(s) confirmed from the photo manager's trash;"
+        f" {len(plan.restorations)} restored; {plan.ignored} of its own file(s) ignored."
+    )
+    if plan.new_sidecars:
+        typer.echo(f"{len(plan.new_sidecars)} sidecar(s) written by the photo manager.")
+    if plan.unaccounted:
+        typer.secho(
+            f"WARNING: {len(plan.unaccounted)} recorded file(s) are gone with no"
+            " counterpart on disk and no trash record — nothing was adopted for these."
+            "\nIf you emptied the photo manager's trash, re-run with"
+            " --adopt-unaccounted to record them as deliberate deletions.",
+            fg=typer.colors.YELLOW, err=True,
+        )
+        for missing in plan.unaccounted[:10]:
+            typer.secho(f"  {missing.rel}", err=True)
+    if plan.unknown_media:
+        typer.secho(
+            f"WARNING: {len(plan.unknown_media)} media file(s) in archive/ that the"
+            " ledger has never seen; import them with `maintain import` instead.",
+            fg=typer.colors.YELLOW, err=True,
+        )
+    typer.echo(f"Reports: {wt.reports_dir / RECONCILE_REPORT}, {wt.reports_dir / DRIFT_REPORT}")
+    if execute:
+        typer.secho("Adopted into the catalog.", fg=typer.colors.GREEN)
+        typer.echo(
+            "Next: `archive maintain apply-sidecars --execute` to write the corrected"
+            " dates and folder keywords where digiKam can see them, then `archive verify`."
+        )
+    else:
+        typer.echo("Dry run — nothing written. Re-run with --execute to adopt.")
+
+
+@maintain_app.command("apply-sidecars")
+def maintain_apply_sidecars(
+    ctx: typer.Context,
+    execute: Annotated[
+        bool, typer.Option("--execute", help="Write the sidecars (default: dry run).")
+    ] = False,
+) -> None:
+    """Write adopted dates and keywords to XMP sidecars (Stage 8).
+
+    Image bytes are never touched, so ``verify`` stays valid. Close the photo
+    manager first so it does not write the same sidecars concurrently.
+    """
+    wt = _working_tree(ctx)
+    cfg = _load_config_or_exit(wt)
+    log = configure_logging(wt.logs_dir, stage="apply-sidecars")
+    conn = open_catalog(wt.catalog_path)
+    try:
+        with record_run(conn, "apply-sidecars", {"execute": execute}):
+            summary = run_apply_sidecars(conn, cfg, wt, log, execute=execute)
+    except (SidecarError, SpaceError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+
+    if not summary.pending:
+        typer.echo("No pending sidecar writes. Run `maintain reconcile --execute` first.")
+        return
+    if not execute:
+        typer.echo(
+            f"{summary.pending} sidecar(s) to write ({summary.dates_written} with a"
+            f" corrected date, {summary.keywords_written} with keyword(s));"
+            f" about {summary.bytes_estimated:,} bytes."
+        )
+        typer.echo("Dry run — nothing written. Re-run with --execute.")
+        return
+    typer.echo(
+        f"Wrote {summary.written} sidecar(s): {summary.dates_written} date(s),"
+        f" {summary.keywords_written} keyword set(s)."
+    )
+    if summary.skipped_missing_media:
+        typer.secho(
+            f"{summary.skipped_missing_media} file(s) were not where the ledger says;"
+            " re-run `maintain reconcile --execute` and try again.",
+            fg=typer.colors.YELLOW, err=True,
+        )
+    if summary.failed:
+        typer.secho(f"{summary.failed} sidecar write(s) FAILED:", fg=typer.colors.RED,
+                    err=True)
+        for failure in summary.failures[:10]:
+            typer.secho(f"  {failure}", err=True)
+        raise typer.Exit(1)
+    typer.secho(
+        "Image bytes untouched. In digiKam: Album → Reread Metadata From File.",
+        fg=typer.colors.GREEN,
     )
 
 

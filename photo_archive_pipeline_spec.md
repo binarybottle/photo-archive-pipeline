@@ -496,6 +496,20 @@ of a 1% random sample matches recorded hashes.
 - Documented handoff to a photo manager: digiKam or immich pointed at `archive/`,
   reading embedded XMP keywords as albums/tags. The archive tree remains the source of
   truth; the manager is a view.
+- `maintain reconcile`: adopt hand-curation done in that manager back into the ledger,
+  so the conservation law keeps holding over an archive the user edits. Files moved to a
+  new folder update their placement; files deleted become a fourth disposition,
+  `removed`, dated and logged (confirmed against the manager's trash records, or with
+  `--adopt-unaccounted` once that trash is emptied); the manager's own files are ignored
+  rather than reported as orphans. Each new folder is read as an instruction: a
+  date-shaped folder corrects the date, a year range or configured bucket files coarsely,
+  any other component becomes a keyword. A folder date that already contains the resolved
+  date confirms it rather than coarsening it. Catalog-only — no media file is touched.
+- `maintain apply-sidecars`: write those adopted dates and keywords to each file's XMP
+  sidecar with exiftool, image bytes untouched, so the manager sees them and `verify`
+  stays valid. The prior date is preserved in `XMP-ArchivePipe:OriginalDate` and the
+  before/after pair in the decision log; keywords are removed-then-added so repeated
+  runs neither duplicate them nor disturb the manager's own tags.
 - Quarantine purge is a separate, explicitly manual command that requires typing a
   confirmation phrase and prints what will be destroyed; recommend running it no sooner
   than 6 months after verify passes and backups exist.

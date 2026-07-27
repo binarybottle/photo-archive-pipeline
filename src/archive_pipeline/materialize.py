@@ -609,10 +609,17 @@ def _write_fallback_sidecar(
 
 
 def _exiftool_sidecar(et: ExifToolHelper, args: list[str], media: Path) -> Path:
+    """Write the item's metadata to ``media.ext.xmp``, image bytes untouched.
+
+    Two passes: tags copied from the source in a ``-o`` call outrank
+    assignments made on that same command line, so the resolved date would lose
+    to whatever wrong date is embedded in the image. Copy first, then assign.
+    """
     sidecar = media.with_suffix(media.suffix + ".xmp")
     sidecar.unlink(missing_ok=True)
     try:
-        output = et.execute("-o", str(sidecar), *args, str(media))
+        et.execute("-o", str(sidecar), str(media))
+        output = et.execute("-overwrite_original", *args, str(sidecar))
     except ExifToolExecuteError as exc:
         raise MaterializeError(
             f"exiftool sidecar write failed for {media}: {(exc.stderr or '').strip()}"
